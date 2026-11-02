@@ -40,7 +40,15 @@ fn run(selector: &str, wmma: bool, cases: &[Case]) -> anyhow::Result<Vec<ResultR
     for case in cases {
         eprintln!("parity: wmma={wmma}, {}", case.name);
         let mut session = model.session(case.tokens.len() + 20)?;
+        let start = std::time::Instant::now();
         let logits = session.prefill_logits(&case.tokens)?;
+        let elapsed = start.elapsed().as_secs_f64();
+        eprintln!(
+            "prefill {} wmma={wmma}: {:.6}s, {:.2} tok/s",
+            case.name,
+            elapsed,
+            case.tokens.len() as f64 / elapsed
+        );
         let mut next = 0_usize;
         for i in 1..logits.len() {
             if logits[i] > logits[next] {
@@ -134,5 +142,58 @@ fn wmma_prefill_matches_simt_model() -> anyhow::Result<()> {
         }
     }
     anyhow::ensure!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires gfx11 HIP GPU and cached BF16 Qwen3.5 dense 0.8B"]
+fn dense_wmma_prefill_diagnostics() -> anyhow::Result<()> {
+    let selector = "unsloth/Qwen3.5-0.8B-GGUF:BF16";
+    let tokenizer = QwenTokenizer::from_gguf(download_gguf(selector)?.primary)?
+        .ok_or_else(|| anyhow::anyhow!("missing tokenizer"))?;
+    let corpus = tokenizer.encode(&"The river flows through the valley. Explain how rainfall affects the surrounding farmland. ".repeat(100))?;
+    let cases = vec![
+        Case {
+            name: "short-text".into(),
+            tokens: tokenizer.encode("The capital of France is")?,
+        },
+        Case {
+            name: "text512".into(),
+            tokens: corpus[..512].to_vec(),
+        },
+    ];
+    let reference = run(selector, false, &cases)?;
+    let actual = run(selector, true, &cases)?;
+    for ((case, reference), actual) in cases.iter().zip(reference).zip(actual) {
+        anyhow::ensure!(
+            reference.logits.len() == actual.logits.len(),
+            "logit shape mismatch"
+        );
+        anyhow::ensure!(
+            actual.logits.iter().all(|v| v.is_finite()),
+            "nonfinite dense WMMA logits"
+        );
+        anyhow::ensure!(actual.generated.len() == 20, "missing decode continuation");
+        let error = actual
+            .logits
+            .iter()
+            .zip(&reference.logits)
+            .map(|(a, b)| f64::from(a - b).powi(2))
+            .sum::<f64>();
+        let norm = reference
+            .logits
+            .iter()
+            .map(|v| f64::from(*v).powi(2))
+            .sum::<f64>();
+        let nrms = (error / norm).sqrt();
+        anyhow::ensure!(nrms.is_finite(), "invalid logit comparison");
+        eprintln!(
+            "dense {}: logit NRMS={nrms:.6}, greedy match={}, reference={:?}, WMMA={:?}",
+            case.name,
+            reference.generated == actual.generated,
+            reference.generated,
+            actual.generated
+        );
+    }
     Ok(())
 }

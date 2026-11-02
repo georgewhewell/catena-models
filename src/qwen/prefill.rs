@@ -41,7 +41,7 @@ pub(super) fn emit(
     wmma: WmmaStages,
 ) {
     let moe = cfg.architecture == ModelArchitecture::Qwen35Moe;
-    let project = if moe && wmma.projections {
+    let project = if wmma.projections {
         "stdlib.qwen35.batch.wmma-project"
     } else {
         "stdlib.qwen35.batch.project"
@@ -213,7 +213,11 @@ pub(super) fn emit(
                 &c(cfg.intermediate_size),
                 "w9",
             ],
-            "stdlib.qwen35.batch.gate",
+            if wmma.projections {
+                "stdlib.qwen35.wmma.projection.gate"
+            } else {
+                "stdlib.qwen35.batch.gate"
+            },
             "active",
         );
         free(s, "ffn-input", "active", "active-ready");
@@ -226,7 +230,11 @@ pub(super) fn emit(
                 &c(cfg.hidden_size),
                 "attention-ready",
             ],
-            "stdlib.qwen35.batch.residual",
+            if wmma.projections {
+                "stdlib.qwen35.wmma.projection.residual"
+            } else {
+                "stdlib.qwen35.batch.residual"
+            },
             "output",
         );
         free(s, "active-ready", "output", "output-ready");
@@ -369,7 +377,11 @@ pub(super) fn emit(
                 &c(cfg.intermediate_size),
                 "w12",
             ],
-            "stdlib.qwen35.batch.gate",
+            if wmma.projections {
+                "stdlib.qwen35.wmma.projection.gate"
+            } else {
+                "stdlib.qwen35.batch.gate"
+            },
             "active",
         );
         free(s, "ffn-input", "active", "active-ready");
@@ -382,7 +394,11 @@ pub(super) fn emit(
                 &c(cfg.hidden_size),
                 "attention-ready",
             ],
-            "stdlib.qwen35.batch.residual",
+            if wmma.projections {
+                "stdlib.qwen35.wmma.projection.residual"
+            } else {
+                "stdlib.qwen35.batch.residual"
+            },
             "output",
         );
         free(s, "active-ready", "output", "output-after-active");

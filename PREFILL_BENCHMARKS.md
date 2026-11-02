@@ -91,8 +91,8 @@ attention. Generated gfx1100/gfx1151 code contains
 `v_wmma_f32_16x16x16_bf16`. Checked U64-to-U32 narrowing replaces the old
 32-step loop-count conversion fold without changing its bounds check.
 
-`--wmma-prefill` selects the experimental native path for Qwen3.5/3.6 MoE on
-HIP gfx11. It includes grouped routed/shared expert gate/up and down projections,
+`--wmma-prefill` selects the experimental native path for dense and MoE
+Qwen3.5/3.6 on HIP gfx11. It includes grouped routed/shared expert gate/up and down projections,
 full-attention Q/K/V and output projections, linear output projections, and
 attention with 64-query tiles. The four recurrent input projections retain the
 original SIMT tree. Attention uses three launches per tile (QK, softmax, PV),
@@ -222,3 +222,58 @@ python3 tools/generate-qwen35-wmma-attention.py
 python3 tools/generate-qwen35-exact-attention.py
 python3 tools/generate-qwen35-wmma-epilogues.py
 ```
+
+
+## Dense Qwen3.5 WMMA prefill
+
+The same opt-in flag now supports dense Qwen3.5. Full-attention Q/K/V,
+attention/output projections, and the gate/up/down FFN projections in both
+full-attention and DeltaNet layers use the existing WMMA primitives. Dense
+FFNs store gate and up projections as BF16, round SiLU to BF16, and multiply
+with a BF16 result, preserving the existing intermediate precision boundaries.
+The four recurrent DeltaNet inputs retain SIMT projection trees. Decode and
+the default flag-off graph are unchanged.
+
+`CATENA_WMMA_COMPONENTS=all` is the flag default. Attention-only selections
+apply to dense models; `safe` keeps dense FFNs and other projections on SIMT
+and selects safe tiled attention. Expert-only selections (`experts`,
+`exact-experts`, `safe-experts`) require MoE and are rejected for dense models.
+
+The adjacent compiler's emulator must stay out of line: HIP otherwise promotes
+its private fragment arrays into a fixed 64 KiB LDS reservation even in native
+mode, leaving no room for the projection kernel's dynamic LDS. The compiler
+fix preserves emulator arithmetic and passed the existing native/emulated HIP
+stress suite with zero mismatches across 17,892,864 output positions.
+
+```bash
+HF_HUB_OFFLINE=1 cargo run --release -- \
+  --model unsloth/Qwen3.5-0.8B-GGUF:BF16 --wmma-prefill \
+  --prompt 'The capital of France is' -n 20
+HF_HUB_OFFLINE=1 cargo test --release --test qwen35_wmma_model \
+  dense_wmma_prefill_diagnostics -- --ignored --nocapture
+```
+
+The diagnostic model check uses one short prompt and one 512-token prompt,
+then 20 decode tokens each. It reports numerical/continuation differences
+rather than enforcing exact native WMMA parity. Focused projection and dense
+FFN GPU checks cover partial tiles and BF16 rounding boundaries.
+
+### Dense 0.8B validation on gfx1151
+
+One run on the cached `unsloth/Qwen3.5-0.8B-GGUF:BF16`, with native WMMA
+and the adjacent compiler's out-of-line emulator fix:
+
+| Prompt | SIMT prefill | WMMA prefill | Relative logit RMS | 20-token greedy continuation |
+| --- | ---: | ---: | ---: | --- |
+| Short text, 5 tokens | 0.049841 s | 0.048389 s | 0.8269% | identical |
+| Text, 512 tokens | 2.005946 s (255.24 tok/s) | 0.961360 s (532.58 tok/s) | 0.9345% | identical |
+
+PP512 improved **2.09×** in this single comparison. Prefill timings exclude
+model loading, compilation, and session construction; they include logit
+readback. The complete diagnostic test took 358.86 s including cold compilation
+and both models' decode checks. These two matching continuations do not
+establish parity for other prompts or dense model sizes. WMMA remains opt-in.
+
+All library tests passed (30 passed, one ignored), as did all-target compilation,
+source-generation checks, focused GPU projection/FFN checks, and the compiler's
+native/emulated HIP stress check. No model inference was moved into Rust.
