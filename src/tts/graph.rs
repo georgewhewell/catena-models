@@ -4,11 +4,7 @@ pub const SOURCE: &str = include_str!("../catena/tts_model.hex");
 /// Complete portable Hex bundle; the receiver supplies only Catena's core stdlib.
 pub fn bundle(config: &Config) -> Result<String> {
     config.validate()?;
-    Ok(with_exports(&[
-        "tts.prepare",
-        "tts.synthesize",
-        "tts.synthesize-debug",
-    ]))
+    Ok(with_exports(&["tts.synthesize", "tts.synthesize-debug"]))
 }
 
 fn with_exports(exports: &[&str]) -> String {

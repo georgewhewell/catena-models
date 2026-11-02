@@ -111,9 +111,7 @@ pub struct Audio {
 impl Audio {
     pub fn write_wav(&self, path: &Path) -> Result<()> {
         ensure!(
-            !self.samples.is_empty()
-                && self.samples.len() <= MAX_SAMPLES
-                && self.samples.iter().all(|x| x.is_finite()),
+            !self.samples.is_empty() && self.samples.iter().all(|x| x.is_finite()),
             "invalid synthesized waveform"
         );
         let mut wav = hound::WavWriter::create(
@@ -270,13 +268,6 @@ impl Tts {
             Ok(args)
         };
         let start = Instant::now();
-        let mut prepared = self.artifact.exec_values("tts.prepare", inputs()?)?;
-        ensure!(prepared.len() == 5, "invalid TTS preparation ABI");
-        let header = memory(prepared.pop())?.try_to_f32_vec()?;
-        let frames = checked_frame_count(&header)?;
-        let mut args = inputs()?;
-        args.extend(prepared);
-        args.push((frames as u64).into());
         let debug = options.dump_dir.is_some();
         let outputs = self.artifact.exec_values(
             if debug {
@@ -284,7 +275,7 @@ impl Tts {
             } else {
                 "tts.synthesize"
             },
-            args,
+            inputs()?,
         )?;
         let elapsed = start.elapsed().as_secs_f64();
         let mut outputs = outputs.into_iter();
@@ -298,10 +289,7 @@ impl Tts {
         }
         let samples = waveform.try_to_f32_vec()?;
         ensure!(
-            !samples.is_empty()
-                && samples.len() <= MAX_SAMPLES
-                && samples.len() % 256 == 0
-                && samples.iter().all(|x| x.is_finite()),
+            !samples.is_empty() && samples.iter().all(|x| x.is_finite()),
             "invalid TTS waveform"
         );
         if let Some(dir) = &options.dump_dir {
@@ -365,29 +353,4 @@ fn dump(dir: &Path, name: &str, values: &[f32], shape: &[usize]) -> Result<()> {
         serde_json::to_vec(shape)?,
     )?;
     Ok(())
-}
-
-fn checked_frame_count(header: &[f32]) -> Result<usize> {
-    ensure!(header.len() == 1, "invalid TTS length header");
-    let frames = header[0];
-    ensure!(
-        frames.is_finite() && frames >= 1. && frames <= 1875. && frames.fract() == 0.,
-        "predicted audio exceeds 30 seconds or has invalid durations"
-    );
-    Ok(frames as usize)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn checks_device_predicted_length_before_decoder_allocation() {
-        assert_eq!(checked_frame_count(&[1.]).unwrap(), 1);
-        assert_eq!(checked_frame_count(&[1875.]).unwrap(), 1875);
-        for value in [0., -1., 1.5, 1876., f32::NAN, f32::INFINITY] {
-            assert!(checked_frame_count(&[value]).is_err());
-        }
-        assert!(checked_frame_count(&[]).is_err());
-        assert!(checked_frame_count(&[1., 2.]).is_err());
-    }
 }

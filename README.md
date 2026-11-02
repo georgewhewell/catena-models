@@ -154,9 +154,27 @@ The model defaults to `facebook/mms-tts-eng`; use `--model` to override it.
 MMS uses BF16 learned tensors and F32 numerical calculations, producing 16 kHz
 WAV audio. Seed, speaking rate, noise scales, tensor dumps, inspection, and
 entrypoint export remain available. Regenerate its core GPU kernels and weight
-bindings with `python3 scripts/generate-tts-hex.py`. Preparation returns a one-element
-device length header; Rust validates the frame count before invoking the Hex
-decoder. The public synthesis API and normal/debug result layouts are preserved.
+bindings with `python3 scripts/generate-tts-hex.py`.
+
+Synthesis makes one Hex call. Hex predicts durations, reads the device-computed
+frame count through Catena's generic `stdlib.gpu.memory.global_read_host`
+operation, validates it, allocates exact-size decoder buffers, and generates
+the waveform. Frame counts must be integral and within 1–1875 (30 seconds).
+Invalid lengths return status 1 and an empty waveform before decoder allocation;
+success returns status 0. Rust handles tokenization, weight loading, result
+readback, and WAV conversion without coordinating inference stages.
+
+Exported bundles expose `tts.synthesize` and `tts.synthesize-debug`, each taking
+token IDs, token count, synthesis options, and prepared weight references.
+Preparation is private: callers no longer pass intermediate buffers or a frame
+count. Normal results remain waveform/status; debug results append durations,
+stats, duration noise, latent noise, and flow output. Previously exported
+bundles must be regenerated with the matching compiler. Tokenization and
+checkpoint weight preparation remain outside this inference change.
+
+`tests/mms_single.rs` checks scalar readback and length bounds, and has ignored
+GPU checks for direct artifact execution, normal/debug agreement, invalid
+lengths, and exact parity with a saved short fixed-seed baseline.
 
 ## Compiler integration
 
