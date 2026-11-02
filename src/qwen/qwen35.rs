@@ -458,16 +458,10 @@ fn replace_moe_decoder(s: &mut String, name: &str, linear: bool) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<String> {
-    // Diagnostic ablations are encoded in the generated source/cache key.
-    let scope = if options.wmma_prefill {
-        std::env::var("CATENA_WMMA_COMPONENTS").unwrap_or_else(|_| "all".into())
-    } else {
-        "none".into()
-    };
+pub(super) fn wmma_stages(config: &ModelConfig, scope: &str) -> Result<WmmaStages> {
     ensure!(
         matches!(
-            scope.as_str(),
+            scope,
             "all"
                 | "experts"
                 | "attention"
@@ -480,24 +474,36 @@ pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<
         ),
         "CATENA_WMMA_COMPONENTS has an unknown ablation name"
     );
-    let wmma = WmmaStages {
+    ensure!(
+        config.architecture != ModelArchitecture::Qwen35Dense
+            || !matches!(scope, "experts" | "exact-experts" | "safe-experts"),
+        "expert-only WMMA components require a Qwen3.5 MoE model"
+    );
+    Ok(WmmaStages {
         projections: scope == "all",
         experts: matches!(
-            scope.as_str(),
+            scope,
             "all" | "experts" | "exact-experts" | "safe-experts" | "safe"
         ),
         attention: matches!(
-            scope.as_str(),
+            scope,
             "all" | "attention" | "exact-attention" | "safe-attention" | "safe"
         ),
-        exact_gate: matches!(scope.as_str(), "exact-experts" | "safe-experts" | "safe"),
-        exact_context: matches!(
-            scope.as_str(),
-            "exact-attention" | "safe-attention" | "safe"
-        ),
-        safe_experts: matches!(scope.as_str(), "safe-experts" | "safe"),
-        safe_scores: matches!(scope.as_str(), "safe-attention" | "safe"),
+        exact_gate: matches!(scope, "exact-experts" | "safe-experts" | "safe"),
+        exact_context: matches!(scope, "exact-attention" | "safe-attention" | "safe"),
+        safe_experts: matches!(scope, "safe-experts" | "safe"),
+        safe_scores: matches!(scope, "safe-attention" | "safe"),
+    })
+}
+
+pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<String> {
+    // Diagnostic ablations are encoded in the generated source/cache key.
+    let scope = if options.wmma_prefill {
+        std::env::var("CATENA_WMMA_COMPONENTS").unwrap_or_else(|_| "all".into())
+    } else {
+        "none".into()
     };
+    let wmma = wmma_stages(config, &scope)?;
     let full = (0..config.num_layers)
         .filter(|&l| config.layer_type(l) == LayerType::FullAttention)
         .collect::<Vec<_>>();

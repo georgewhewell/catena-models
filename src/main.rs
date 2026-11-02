@@ -23,7 +23,7 @@ struct Args {
     #[arg(long, value_enum, default_value_t = KernelKind::Fused)]
     kernels: KernelKind,
 
-    /// Use experimental RDNA3 tiled attention and expert prefill kernels.
+    /// Use experimental RDNA3 WMMA prefill for dense/MoE Qwen3.5 models.
     #[arg(long)]
     wmma_prefill: bool,
 
