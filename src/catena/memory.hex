@@ -1084,5 +1084,3 @@
   ([.x4 x12 value x14] (meta.master.u64-write.4 {{_} (name.stdlib.gpu.memory.global_write lift)} evaluate {_}) [x15.])
   [. x15]
  ))
-
-

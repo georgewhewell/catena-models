@@ -111,9 +111,7 @@ pub struct Audio {
 impl Audio {
     pub fn write_wav(&self, path: &Path) -> Result<()> {
         ensure!(
-            !self.samples.is_empty()
-                && self.samples.len() <= MAX_SAMPLES
-                && self.samples.iter().all(|x| x.is_finite()),
+            !self.samples.is_empty() && self.samples.iter().all(|x| x.is_finite()),
             "invalid synthesized waveform"
         );
         let mut wav = hound::WavWriter::create(
@@ -270,13 +268,6 @@ impl Tts {
             Ok(args)
         };
         let start = Instant::now();
-        let mut prepared = self.artifact.exec_values("tts.prepare", inputs()?)?;
-        ensure!(prepared.len() == 5, "invalid TTS preparation ABI");
-        let header = memory(prepared.pop())?.try_to_f32_vec()?;
-        let frames = checked_frame_count(&header)?;
-        let mut args = inputs()?;
-        args.extend(prepared);
-        args.push((frames as u64).into());
         let debug = options.dump_dir.is_some();
         let outputs = self.artifact.exec_values(
             if debug {
@@ -284,24 +275,25 @@ impl Tts {
             } else {
                 "tts.synthesize"
             },
-            args,
+            inputs()?,
         )?;
         let elapsed = start.elapsed().as_secs_f64();
         let mut outputs = outputs.into_iter();
         let waveform = memory(outputs.next())?;
-        match outputs.next() {
-            Some(Value::U64(0)) => {}
-            Some(Value::U64(_)) => {
-                bail!("predicted audio exceeds 30 seconds or has invalid durations")
-            }
-            _ => bail!("invalid TTS status output"),
+        let result = memory(outputs.next())?.try_to_u64_vec()?;
+        ensure!(result.len() == 2, "invalid TTS result descriptor");
+        if result[1] != 0 {
+            bail!("predicted audio exceeds 30 seconds or has invalid durations");
         }
-        let samples = waveform.try_to_f32_vec()?;
+        let mut samples = waveform.try_to_f32_vec()?;
+        let valid = usize::try_from(result[0]).context("invalid TTS sample count")?;
         ensure!(
-            !samples.is_empty()
-                && samples.len() <= MAX_SAMPLES
-                && samples.len() % 256 == 0
-                && samples.iter().all(|x| x.is_finite()),
+            valid <= samples.len(),
+            "TTS sample count exceeds output capacity"
+        );
+        samples.truncate(valid);
+        ensure!(
+            !samples.is_empty() && samples.iter().all(|x| x.is_finite()),
             "invalid TTS waveform"
         );
         if let Some(dir) = &options.dump_dir {
@@ -330,7 +322,9 @@ impl Tts {
                 } else {
                     mem.try_to_f32_vec()?
                 };
-                dump(dir, name, &values, &shape)?;
+                let count = shape.iter().product::<usize>();
+                ensure!(count <= values.len(), "TTS capture exceeds buffer capacity");
+                dump(dir, name, &values[..count], &shape)?;
             }
             dump(dir, "waveform", &samples, &[samples.len()])?;
         }
@@ -365,29 +359,4 @@ fn dump(dir: &Path, name: &str, values: &[f32], shape: &[usize]) -> Result<()> {
         serde_json::to_vec(shape)?,
     )?;
     Ok(())
-}
-
-fn checked_frame_count(header: &[f32]) -> Result<usize> {
-    ensure!(header.len() == 1, "invalid TTS length header");
-    let frames = header[0];
-    ensure!(
-        frames.is_finite() && frames >= 1. && frames <= 1875. && frames.fract() == 0.,
-        "predicted audio exceeds 30 seconds or has invalid durations"
-    );
-    Ok(frames as usize)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn checks_device_predicted_length_before_decoder_allocation() {
-        assert_eq!(checked_frame_count(&[1.]).unwrap(), 1);
-        assert_eq!(checked_frame_count(&[1875.]).unwrap(), 1875);
-        for value in [0., -1., 1.5, 1876., f32::NAN, f32::INFINITY] {
-            assert!(checked_frame_count(&[value]).is_err());
-        }
-        assert!(checked_frame_count(&[]).is_err());
-        assert!(checked_frame_count(&[1., 2.]).is_err());
-    }
 }

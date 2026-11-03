@@ -154,9 +154,33 @@ The model defaults to `facebook/mms-tts-eng`; use `--model` to override it.
 MMS uses BF16 learned tensors and F32 numerical calculations, producing 16 kHz
 WAV audio. Seed, speaking rate, noise scales, tensor dumps, inspection, and
 entrypoint export remain available. Regenerate its core GPU kernels and weight
-bindings with `python3 scripts/generate-tts-hex.py`. Preparation returns a one-element
-device length header; Rust validates the frame count before invoking the Hex
-decoder. The public synthesis API and normal/debug result layouts are preserved.
+bindings with `python3 scripts/generate-tts-hex.py`.
+
+Synthesis makes one Hex call. Hex preallocates a reusable decoder workspace
+(about 152 MiB), predicts durations, validates the frame count on the GPU, and
+generates the waveform. Kernels read the live length from device memory and
+skip work beyond it; convolutions gather patches directly without im2col
+buffers. Frame counts must be integral and within 1–1875 (30 seconds).
+Invalid lengths produce zero valid samples and status 1, disabling decoder
+arithmetic; success returns status 0. This uses upstream Catena operations,
+without HostRead or an intermediate device-to-host transfer. Rust handles
+tokenization, weight loading, result readback, and WAV conversion without
+coordinating inference stages.
+
+Exported bundles expose `tts.synthesize` and `tts.synthesize-debug`, each taking
+token IDs, token count, synthesis options, and prepared weight references.
+Preparation is private: callers no longer pass intermediate buffers or a frame
+count. Normal results are a waveform buffer and a two-U64 device buffer
+containing `[valid_sample_count, status]`. Only the waveform's valid prefix is
+audio. Debug results append durations, stats, duration noise, latent noise, and
+flow output; captures also use their live shape's prefix. Previously exported
+bundles must be regenerated for this result ABI. Tokenization and checkpoint
+weight preparation remain outside this inference change.
+
+`tests/mms_single.rs` checks compilation with upstream operations, and has
+ignored GPU checks for device-side length validation, convolution bounds,
+direct artifact execution, normal/debug agreement, and exact parity with a
+saved short fixed-seed baseline.
 
 ## Compiler integration
 
