@@ -11,18 +11,25 @@ fn length_source() -> Vec<String> {
     let model = tts::graph::SOURCE
         .replace("tts.", "stdlib.tts.")
         .replace("stdlib.stdlib.tts.", "stdlib.tts.");
-    [include_str!("../src/catena/memory.hex"), include_str!("../src/catena/numeric.hex"), include_str!("../src/catena/resources.hex"), include_str!("../src/catena/cooperative.hex"), &model, r#"
-(def program check-length : {((cap.ref mem) val)} -> (u64 val) =
- ([header.] {[.header] (const.u64.0x0000000000000000)} stdlib.qwen3.memory.ref-read-host-f32 [frames.] [.frames] stdlib.tts.checked-length))
-(def program read-u64 : {((cap.ref mem) val)} -> (u64 val) =
- ([header.] {[.header] (const.u64.0x0000000000000000)} stdlib.qwen3.memory.ref-read-host-u64))
-(def program dynamic-allocation : {((cap.ref mem) val)} -> ((cap.own mem) val) =
- ([header.] {[.header] (const.u64.0x0000000000000000)} stdlib.qwen3.memory.ref-read-host-u64 [count.] [.count] stdlib.qwen3.memory.alloc-f32))
-"#].into_iter().map(str::to_owned).collect()
+    [
+        include_str!("../src/catena/memory.hex"),
+        include_str!("../src/catena/numeric.hex"),
+        include_str!("../src/catena/resources.hex"),
+        include_str!("../src/catena/cooperative.hex"),
+        &model,
+        r#"
+(def program check-length : {((cap.own mem) val)} -> ((cap.own mem) val) =
+ ([header.] ((const.u64.0x0000000000000002) stdlib.qwen3.memory.alloc-u64 [result.])
+ {[.header] (const.u64.0x0000000000000001) [.result]} stdlib.tts.prealloc.metadata))
+"#,
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
 }
 
 #[test]
-fn length_and_readback_compile() -> Result<()> {
+fn preallocated_metadata_compiles() -> Result<()> {
     let source = length_source();
     for dialect in [GpuDialect::Hip, GpuDialect::Cuda] {
         let module = compile_sources(
@@ -32,8 +39,8 @@ fn length_and_readback_compile() -> Result<()> {
             dialect,
         )?;
         ensure!(
-            module.source.contains("catena_host_read"),
-            "missing host read"
+            !module.source.contains("catena_host_read"),
+            "unexpected HostRead dependency"
         );
     }
     Ok(())
@@ -41,7 +48,7 @@ fn length_and_readback_compile() -> Result<()> {
 
 #[test]
 #[ignore = "requires HIP GPU"]
-fn length_and_dynamic_allocation() -> Result<()> {
+fn device_length_metadata() -> Result<()> {
     let source = length_source();
     let mut rt = Runtime::new(GpuDialect::Hip)?;
     let artifact = rt.load(compile_sources(
@@ -50,7 +57,7 @@ fn length_and_dynamic_allocation() -> Result<()> {
             .chain(source.iter().map(String::as_str)),
         GpuDialect::Hip,
     )?)?;
-    for (value, expected) in [
+    for (value, frames) in [
         (1., 1),
         (1875., 1875),
         (0., 0),
@@ -62,29 +69,15 @@ fn length_and_dynamic_allocation() -> Result<()> {
         (f32::NEG_INFINITY, 0),
     ] {
         let header = rt.mem_f32(&[value])?;
-        let [Value::U64(actual)] = artifact.exec("check-length", [header.as_ref().into()])? else {
-            anyhow::bail!("wrong length ABI")
+        let [Value::MemOwn(result)] = artifact.exec("check-length", [header.into()])? else {
+            anyhow::bail!("wrong metadata ABI")
         };
+        let actual = result.try_to_u64_vec()?;
         ensure!(
-            actual == expected,
-            "{value}: got {actual}, expected {expected}"
+            actual == [frames * 256, u64::from(frames == 0)],
+            "{value}: unexpected metadata {actual:?}"
         );
     }
-    // Keep all 64 bits, including values that cannot round-trip through F32.
-    let header = rt.mem_u64(&[0xfedc_ba98_7654_3210])?;
-    let [Value::U64(actual)] = artifact.exec("read-u64", [header.as_ref().into()])? else {
-        anyhow::bail!("wrong readback ABI")
-    };
-    ensure!(actual == 0xfedc_ba98_7654_3210, "truncated U64 readback");
-    let header = rt.mem_u64(&[17])?;
-    let [Value::MemOwn(output)] = artifact.exec("dynamic-allocation", [header.as_ref().into()])?
-    else {
-        anyhow::bail!("wrong allocation ABI")
-    };
-    ensure!(
-        output.try_to_f32_vec()?.len() == 17,
-        "wrong dynamic allocation size"
-    );
     Ok(())
 }
 
@@ -150,11 +143,13 @@ fn exported_single_call_matches_baseline() -> Result<()> {
     let Some(Value::MemOwn(waveform)) = values.next() else {
         anyhow::bail!("missing waveform")
     };
-    ensure!(
-        matches!(values.next(), Some(Value::U64(0))),
-        "synthesis failed"
-    );
-    let wave = waveform.try_to_f32_vec()?;
+    let Some(Value::MemOwn(result)) = values.next() else {
+        anyhow::bail!("missing metadata")
+    };
+    let result = result.try_to_u64_vec()?;
+    ensure!(result[1] == 0, "synthesis failed");
+    let mut wave = waveform.try_to_f32_vec()?;
+    wave.truncate(result[0] as usize);
     assert_dump(baseline, "waveform", &wave)?;
     for (name, is_bf16) in [
         ("durations", false),
@@ -166,7 +161,7 @@ fn exported_single_call_matches_baseline() -> Result<()> {
         let Some(Value::MemOwn(mem)) = values.next() else {
             anyhow::bail!("missing capture {name}")
         };
-        let data = if is_bf16 {
+        let data: Vec<f32> = if is_bf16 {
             mem.try_to_u16_vec()?
                 .into_iter()
                 .map(|v| f32::from_bits((v as u32) << 16))
@@ -174,7 +169,13 @@ fn exported_single_call_matches_baseline() -> Result<()> {
         } else {
             mem.try_to_f32_vec()?
         };
-        assert_dump(baseline, name, &data)?;
+        let count = match name {
+            "durations" => ids.len(),
+            "stats" => ids.len() * 384,
+            "duration_noise" => ids.len() * 2,
+            _ => 192 * wave.len() / 256,
+        };
+        assert_dump(baseline, name, &data[..count])?;
     }
     ensure!(values.next().is_none(), "extra debug outputs");
     let mut values = artifact
@@ -183,36 +184,124 @@ fn exported_single_call_matches_baseline() -> Result<()> {
     let Some(Value::MemOwn(mem)) = values.next() else {
         anyhow::bail!("missing waveform")
     };
+    let Some(Value::MemOwn(result)) = values.next() else {
+        anyhow::bail!("missing metadata")
+    };
+    let result = result.try_to_u64_vec()?;
+    ensure!(result[1] == 0, "normal synthesis failed");
+    let mut normal = mem.try_to_f32_vec()?;
+    normal.truncate(result[0] as usize);
     ensure!(
-        matches!(values.next(), Some(Value::U64(0))),
-        "normal synthesis failed"
-    );
-    ensure!(
-        mem.try_to_f32_vec()? == wave,
+        normal
+            .iter()
+            .map(|v| v.to_bits())
+            .eq(wave.iter().map(|v| v.to_bits())),
         "normal/debug waveforms differ"
     );
-    // Direct artifact caller supplies no intermediate buffers or frame count.
-    // An extremely slow rate produces the existing invalid-duration sentinel.
     let mut invalid = artifact
         .exec_values("tts.synthesize-debug", args(1e-20)?)?
         .into_iter();
-    let Some(Value::MemOwn(mem)) = invalid.next() else {
-        anyhow::bail!("missing failure waveform")
+    let Some(Value::MemOwn(_capacity)) = invalid.next() else {
+        anyhow::bail!("missing output capacity")
+    };
+    let Some(Value::MemOwn(result)) = invalid.next() else {
+        anyhow::bail!("missing failure metadata")
     };
     ensure!(
-        matches!(invalid.next(), Some(Value::U64(1))),
+        result.try_to_u64_vec()? == [0, 1],
         "invalid duration accepted"
     );
-    ensure!(mem.try_to_f32_vec()?.is_empty(), "failure produced audio");
-    let captures = invalid.collect::<Vec<_>>();
-    for value in &captures[3..] {
-        let Value::MemOwn(mem) = value else {
-            anyhow::bail!("bad failure capture")
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires HIP GPU; bounded convolution tails and poisoned padding"]
+fn bounded_convolutions_match_original() -> Result<()> {
+    let mut source = length_source();
+    for helper in [
+        include_str!("../src/catena/state_buffers.hex"),
+        include_str!("../src/catena/qwen35_batch_projection.hex"),
+        include_str!("../src/catena/whisper.hex"),
+    ] {
+        source.push(helper.into());
+    }
+    source.push(r#"
+(def program bounded-conv : {((cap.own mem) val) ((cap.ref mem) val) ((cap.ref mem) val) ((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
+ ([x w b metadata out capacity out-capacity ks dilation stride pad transpose.]
+ {[.x] [.w] [.b] [.capacity] [.out-capacity] (const.u64.0x0000000000000002) (const.u64.0x0000000000000003) [.ks] [.dilation] [.stride] [.pad] [.transpose] (const.u64.0x0000000000000001) [.metadata] [.out]} stdlib.tts.prealloc.conv))
+(def program reference-conv : {((cap.own mem) val) ((cap.ref mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
+ ([x w b frames out-frames ks dilation stride pad transpose.]
+ {[.x] [.w] [.b] [.frames] [.out-frames] (const.u64.0x0000000000000002) (const.u64.0x0000000000000003) [.ks] [.dilation] [.stride] [.pad] [.transpose] (const.u64.0x0000000000000001)} stdlib.tts.conv))
+"#.into());
+    let mut rt = Runtime::new(GpuDialect::Hip)?;
+    let artifact = rt.load(compile_sources(
+        core_sources()
+            .map(|s| -> &str { s })
+            .chain(source.iter().map(String::as_str)),
+        GpuDialect::Hip,
+    )?)?;
+    for (frames, ks, dilation, stride, pad, transpose) in
+        [(257, 3, 3, 1, 3, 0), (33, 4, 1, 2, 1, 1)]
+    {
+        let x: Vec<f32> = (0..frames * 2)
+            .map(|i| (i % 17) as f32 / 32. - 0.25)
+            .collect();
+        let mut capacity = vec![0x7fc0; 1875 * 2]; // BF16 NaNs must never enter live convolution bounds.
+        capacity[..x.len()].copy_from_slice(&bf16(&x));
+        let w: Vec<f32> = (0..3 * 2 * ks)
+            .map(|i| (i % 11) as f32 / 64. - 0.1)
+            .collect();
+        let w = rt.mem_u16(&bf16(&w))?;
+        let bias = rt.mem_u16(&bf16(&[0.125, -0.25, 0.375]))?;
+        let metadata = rt.mem_u64(&[(frames * 256) as u64, 0])?;
+        let out = rt.mem_u16(&vec![0x40e8; 1875 * stride * 3])?;
+        let [Value::MemOwn(actual)] = artifact.exec(
+            "bounded-conv",
+            [
+                rt.mem_u16(&capacity)?.into(),
+                w.as_ref().into(),
+                bias.as_ref().into(),
+                metadata.into(),
+                out.into(),
+                1875u64.into(),
+                (1875 * stride as u64).into(),
+                (ks as u64).into(),
+                (dilation as u64).into(),
+                (stride as u64).into(),
+                (pad as u64).into(),
+                (transpose as u64).into(),
+            ],
+        )?
+        else {
+            anyhow::bail!("bad convolution output")
         };
-        // Both absent decoder captures have zero bytes, regardless of dtype.
+        let [Value::MemOwn(reference)] = artifact.exec(
+            "reference-conv",
+            [
+                rt.mem_u16(&bf16(&x))?.into(),
+                w.as_ref().into(),
+                bias.as_ref().into(),
+                (frames as u64).into(),
+                ((frames * stride) as u64).into(),
+                (ks as u64).into(),
+                (dilation as u64).into(),
+                (stride as u64).into(),
+                (pad as u64).into(),
+                (transpose as u64).into(),
+            ],
+        )?
+        else {
+            anyhow::bail!("bad reference output")
+        };
+        let actual = actual.try_to_u16_vec()?;
+        let reference = reference.try_to_u16_vec()?;
         ensure!(
-            mem.try_to_u16_vec()?.is_empty(),
-            "decoder capture allocated on failure"
+            actual[..reference.len()] == reference,
+            "convolution differs at {frames} frames"
+        );
+        ensure!(
+            actual[reference.len()..].iter().all(|x| *x == 0x40e8),
+            "inactive output modified"
         );
     }
     Ok(())

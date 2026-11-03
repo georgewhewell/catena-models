@@ -280,14 +280,18 @@ impl Tts {
         let elapsed = start.elapsed().as_secs_f64();
         let mut outputs = outputs.into_iter();
         let waveform = memory(outputs.next())?;
-        match outputs.next() {
-            Some(Value::U64(0)) => {}
-            Some(Value::U64(_)) => {
-                bail!("predicted audio exceeds 30 seconds or has invalid durations")
-            }
-            _ => bail!("invalid TTS status output"),
+        let result = memory(outputs.next())?.try_to_u64_vec()?;
+        ensure!(result.len() == 2, "invalid TTS result descriptor");
+        if result[1] != 0 {
+            bail!("predicted audio exceeds 30 seconds or has invalid durations");
         }
-        let samples = waveform.try_to_f32_vec()?;
+        let mut samples = waveform.try_to_f32_vec()?;
+        let valid = usize::try_from(result[0]).context("invalid TTS sample count")?;
+        ensure!(
+            valid <= samples.len(),
+            "TTS sample count exceeds output capacity"
+        );
+        samples.truncate(valid);
         ensure!(
             !samples.is_empty() && samples.iter().all(|x| x.is_finite()),
             "invalid TTS waveform"
@@ -318,7 +322,9 @@ impl Tts {
                 } else {
                     mem.try_to_f32_vec()?
                 };
-                dump(dir, name, &values, &shape)?;
+                let count = shape.iter().product::<usize>();
+                ensure!(count <= values.len(), "TTS capture exceeds buffer capacity");
+                dump(dir, name, &values[..count], &shape)?;
             }
             dump(dir, "waveform", &samples, &[samples.len()])?;
         }

@@ -156,25 +156,31 @@ WAV audio. Seed, speaking rate, noise scales, tensor dumps, inspection, and
 entrypoint export remain available. Regenerate its core GPU kernels and weight
 bindings with `python3 scripts/generate-tts-hex.py`.
 
-Synthesis makes one Hex call. Hex predicts durations, reads the device-computed
-frame count through Catena's generic `stdlib.gpu.memory.global_read_host`
-operation, validates it, allocates exact-size decoder buffers, and generates
-the waveform. Frame counts must be integral and within 1–1875 (30 seconds).
-Invalid lengths return status 1 and an empty waveform before decoder allocation;
-success returns status 0. Rust handles tokenization, weight loading, result
-readback, and WAV conversion without coordinating inference stages.
+Synthesis makes one Hex call. Hex preallocates a reusable decoder workspace
+(about 152 MiB), predicts durations, validates the frame count on the GPU, and
+generates the waveform. Kernels read the live length from device memory and
+skip work beyond it; convolutions gather patches directly without im2col
+buffers. Frame counts must be integral and within 1–1875 (30 seconds).
+Invalid lengths produce zero valid samples and status 1, disabling decoder
+arithmetic; success returns status 0. This uses upstream Catena operations,
+without HostRead or an intermediate device-to-host transfer. Rust handles
+tokenization, weight loading, result readback, and WAV conversion without
+coordinating inference stages.
 
 Exported bundles expose `tts.synthesize` and `tts.synthesize-debug`, each taking
 token IDs, token count, synthesis options, and prepared weight references.
 Preparation is private: callers no longer pass intermediate buffers or a frame
-count. Normal results remain waveform/status; debug results append durations,
-stats, duration noise, latent noise, and flow output. Previously exported
-bundles must be regenerated with the matching compiler. Tokenization and
-checkpoint weight preparation remain outside this inference change.
+count. Normal results are a waveform buffer and a two-U64 device buffer
+containing `[valid_sample_count, status]`. Only the waveform's valid prefix is
+audio. Debug results append durations, stats, duration noise, latent noise, and
+flow output; captures also use their live shape's prefix. Previously exported
+bundles must be regenerated for this result ABI. Tokenization and checkpoint
+weight preparation remain outside this inference change.
 
-`tests/mms_single.rs` checks scalar readback and length bounds, and has ignored
-GPU checks for direct artifact execution, normal/debug agreement, invalid
-lengths, and exact parity with a saved short fixed-seed baseline.
+`tests/mms_single.rs` checks compilation with upstream operations, and has
+ignored GPU checks for device-side length validation, convolution bounds,
+direct artifact execution, normal/debug agreement, and exact parity with a
+saved short fixed-seed baseline.
 
 ## Compiler integration
 
