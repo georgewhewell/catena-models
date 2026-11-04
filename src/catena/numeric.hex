@@ -1,72 +1,90 @@
-# Dimension-free Qwen3-family Catena helpers.
+# Dimension-free model numerics. Arithmetic order and F32 boundaries are intentional.
 #
-# Model dimensions and architecture-specific tensor operations live in the
-# generated model source.
+# Exponential adapted from FreeBSD lib/msun/src/e_expf.c (fdlibm).
+# Conversion to float by Ian Lance Taylor, Cygnus Support, ian@cygnus.com.
+# Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+# Developed at SunPro, a Sun Microsystems, Inc. business.
+# Permission to use, copy, modify, and distribute this software is freely
+# granted, provided that this notice is preserved.
+#
+# Round-to-nearest F32, no FMA contraction. Range reduction uses split ln(2)
+# and the fdlibm rational approximation. Scaling uses integer bits, including
+# nearest-even subnormal rounding, so it never needs subnormal F32 arithmetic.
+# NaNs are canonicalized; exception flags and other rounding modes are not modeled.
 
-# Higher-accuracy exponential for model numerics. The stdlib approximation is
-# intentionally small, but its degree-3 polynomial accumulates visible error
-# through deep transformer stacks. This uses the same ln(2) range reduction with a
-# degree-6 Taylor polynomial on [-ln(2)/2, ln(2)/2].
-(def program qwen3.exp-nonneg : (f32 val) -> (f32 val) =
-  ([x.]
-    (const.u32.0x3FB8AA3B u32.bitcast-f32 [inv-ln2.])
-    (const.u32.0x3F317200 u32.bitcast-f32 [ln2-hi.])
-    (const.u32.0x35BFBE8E u32.bitcast-f32 [ln2-lo.])
-    (const.u32.0x3F800000 u32.bitcast-f32 [c0.])
-    (const.u32.0x3F800000 u32.bitcast-f32 [c1.])
-    (const.u32.0x3F000000 u32.bitcast-f32 [c2.])
-    (const.u32.0x3E2AAAAB u32.bitcast-f32 [c3.])
-    (const.u32.0x3D2AAAAB u32.bitcast-f32 [c4.])
-    (const.u32.0x3C088889 u32.bitcast-f32 [c5.])
-    (const.u32.0x3AB60B61 u32.bitcast-f32 [c6.])
-    ([.x inv-ln2] stdlib.qwen3.memory.f32.mul [scaled.])
-    ([.scaled] stdlib.math.round_to_u32 [k-u32.])
-    ([.k-u32] stdlib.qwen3.memory.u32.to-f32 [k-f32.])
-    ([.k-f32 ln2-hi] stdlib.qwen3.memory.f32.mul [k-ln2-hi.])
-    ([.k-f32 ln2-lo] stdlib.qwen3.memory.f32.mul [k-ln2-lo.])
-    ([.x k-ln2-hi] stdlib.qwen3.memory.f32.sub [r-hi.])
-    ([.r-hi k-ln2-lo] stdlib.qwen3.memory.f32.sub [r.])
-    ([.r c6] stdlib.qwen3.memory.f32.mul [r-c6.])
-    ([.c5 r-c6] stdlib.qwen3.memory.f32.add [p5.])
-    ([.r p5] stdlib.qwen3.memory.f32.mul [r-p5.])
-    ([.c4 r-p5] stdlib.qwen3.memory.f32.add [p4.])
-    ([.r p4] stdlib.qwen3.memory.f32.mul [r-p4.])
-    ([.c3 r-p4] stdlib.qwen3.memory.f32.add [p3.])
-    ([.r p3] stdlib.qwen3.memory.f32.mul [r-p3.])
-    ([.c2 r-p3] stdlib.qwen3.memory.f32.add [p2.])
-    ([.r p2] stdlib.qwen3.memory.f32.mul [r-p2.])
-    ([.c1 r-p2] stdlib.qwen3.memory.f32.add [p1.])
-    ([.r p1] stdlib.qwen3.memory.f32.mul [r-p1.])
-    ([.c0 r-p1] stdlib.qwen3.memory.f32.add [polynomial.])
-    (const.u32.0x0000007F [bias-u32.])
-    (const.u32.0x00800000 [exponent-step-u32.])
-    ([.k-u32 bias-u32] stdlib.qwen3.memory.u32.add [biased-exponent.])
-    ([.biased-exponent exponent-step-u32] stdlib.qwen3.memory.u32.mul [power-bits.])
-    ([.power-bits] u32.bitcast-f32 [power-of-two.])
-    ([.polynomial power-of-two] stdlib.qwen3.memory.f32.mul [result.])
-    [.result]
-  )
-)
+(def program stdlib.qwen3.exp-scale : {(f32 val) (u32 val) (bool val)} -> (f32 val) =
+ ([y n negative.]
+  ({[.y]} stdlib.math.f32_bits [y-bits.])
+  ({[.y-bits] (const.u32.0x00000017)} stdlib.math.shift_right [exponent.])
+  ({[.exponent] [.n]} stdlib.qwen3.memory.u32.less_equal [subnormal.])
+  ({[.n] [.exponent]} stdlib.qwen3.memory.u32.sub [shift-raw.])
+  ({[.shift-raw] (const.u32.0x00000001)} stdlib.qwen3.memory.u32.add [shift-plus-one.])
+  ({[.subnormal] [.shift-plus-one] (const.u32.0x00000001)} stdlib.qwen3.memory.select-u32 [shift.])
+  ({[.y-bits] (const.u32.0x00800000)} stdlib.qwen3.memory.u32.rem [fraction.])
+  ({[.fraction] (const.u32.0x00800000)} stdlib.qwen3.memory.u32.add [significand.])
+  ({[.significand] [.shift]} stdlib.math.shift_right [truncated.])
+  ({(const.u32.0x0000001F) [.shift]} stdlib.qwen3.memory.u32.sub [power-shift.])
+  ({(const.u32.0x80000000) [.power-shift]} stdlib.math.shift_right [power.])
+  ({[.truncated] [.power]} stdlib.qwen3.memory.u32.mul [restored.])
+  ({[.significand] [.restored]} stdlib.qwen3.memory.u32.sub [remainder.])
+  ({[.power] (const.u32.0x00000001)} stdlib.math.shift_right [half.])
+  ({[.half] [.remainder]} stdlib.qwen3.memory.u32.less [above-half.])
+  ({[.half] [.remainder]} stdlib.qwen3.memory.u32.equal [at-half.])
+  ({[.truncated] (const.u32.0x00000002)} stdlib.qwen3.memory.u32.rem [parity.])
+  ({[.parity] (const.u32.0x00000001)} stdlib.qwen3.memory.u32.equal [odd.])
+  ({[.at-half] [.odd]} stdlib.boolean.and [odd-tie.])
+  ({[.above-half] [.odd-tie]} stdlib.boolean.or [round-up.])
+  ({[.round-up] (const.u32.0x00000001) (const.u32.0x00000000)} stdlib.qwen3.memory.select-u32 [increment.])
+  ({[.truncated] [.increment]} stdlib.qwen3.memory.u32.add [subnormal-bits.])
+  ({[.n] (const.u32.0x00800000)} stdlib.qwen3.memory.u32.mul [offset.])
+  ({[.y-bits] [.offset]} stdlib.qwen3.memory.u32.sub [down-bits.])
+  ({[.y-bits] [.offset]} stdlib.qwen3.memory.u32.add [up-bits.])
+  ({[.subnormal] [.subnormal-bits] [.down-bits]} stdlib.qwen3.memory.select-u32 [down-result.])
+  ({[.negative] [.down-result] [.up-bits]} stdlib.qwen3.memory.select-u32 [result-bits.])
+  ({[.result-bits]} u32.bitcast-f32 [result.])
+  [.result]
+ ))
 
 (def program qwen3.exp : (f32 val) -> (f32 val) =
-  ([x.]
-    (const.u32.0x00000000 stdlib.qwen3.memory.u32.to-f32 [zero.])
-    (const.u32.0x3F800000 u32.bitcast-f32 [one.])
-    # exp-nonneg constructs 2^k through exponent bits. Saturate before k can
-    # cross the finite F32 exponent range and wrap those bits back to zero.
-    (const.u32.0x42B17218 u32.bitcast-f32 [maximum-log.])
-    (const.u32.0x7F800000 u32.bitcast-f32 [positive-infinity.])
-    ([.x] stdlib.qwen3.memory.f32.negate [negated.])
-    ([.x zero] stdlib.qwen3.memory.f32.less [is-negative.])
-    ([.is-negative negated x] stdlib.qwen3.memory.select-f32 [magnitude.])
-    ([.magnitude] qwen3.exp-nonneg [finite-result.])
-    ([.magnitude maximum-log] stdlib.qwen3.memory.f32.greater [overflows.])
-    ([.overflows positive-infinity finite-result] stdlib.qwen3.memory.select-f32 [positive-result.])
-    ([.one positive-result] stdlib.qwen3.memory.f32.div [reciprocal.])
-    ([.is-negative reciprocal positive-result] stdlib.qwen3.memory.select-f32 [result.])
-    [.result]
-  )
-)
+ ([x.]
+  ({[.x]} stdlib.math.f32_bits [bits.])
+  ({[.bits] (const.u32.0x80000000)} stdlib.qwen3.memory.u32.rem [magnitude.])
+  ({(const.u32.0x80000000) [.bits]} stdlib.qwen3.memory.u32.less_equal [negative.])
+  ({(const.u32.0x7F800000) [.magnitude]} stdlib.qwen3.memory.u32.less [nan.])
+  ({[.negative] (const.u32.0x42CFF1B5) (const.u32.0x42B17218)} stdlib.qwen3.memory.select-u32 [limit.])
+  ({[.magnitude] [.limit]} stdlib.qwen3.memory.u32.less [finite-range.])
+  ({[.finite-range] [.x] (const.u32.0x00000000 u32.bitcast-f32)} stdlib.qwen3.memory.select-f32 [safe-x.])
+  ({[.safe-x]} stdlib.qwen3.memory.f32.negate [minus-x.])
+  ({[.negative] [.minus-x] [.safe-x]} stdlib.qwen3.memory.select-f32 [absolute.])
+  ({[.absolute] (const.u32.0x3FB8AA3B u32.bitcast-f32)} stdlib.qwen3.memory.f32.mul [scaled.])
+  ({[.scaled]} stdlib.math.round_to_u32 [n.])
+  ({[.n]} stdlib.qwen3.memory.u32.to-f32 [nf.])
+  ({[.nf]} stdlib.qwen3.memory.f32.negate [minus-nf.])
+  ({[.negative] [.minus-nf] [.nf]} stdlib.qwen3.memory.select-f32 [k.])
+  ({[.k] (const.u32.0x3F317200 u32.bitcast-f32)} stdlib.qwen3.memory.f32.mul [k-hi.])
+  ({[.safe-x] [.k-hi]} stdlib.qwen3.memory.f32.sub [hi.])
+  ({[.k] (const.u32.0x35BFBE8E u32.bitcast-f32)} stdlib.qwen3.memory.f32.mul [lo.])
+  ({[.hi] [.lo]} stdlib.qwen3.memory.f32.sub [r.])
+  ({[.r] [.r]} stdlib.qwen3.memory.f32.mul [square.])
+  ({[.square] (const.u32.0xBB355215 u32.bitcast-f32)} stdlib.qwen3.memory.f32.mul [p2-term.])
+  ({(const.u32.0x3E2AAA8F u32.bitcast-f32) [.p2-term]} stdlib.qwen3.memory.f32.add [polynomial.])
+  ({[.square] [.polynomial]} stdlib.qwen3.memory.f32.mul [correction.])
+  ({[.r] [.correction]} stdlib.qwen3.memory.f32.sub [c.])
+  ({[.r] [.c]} stdlib.qwen3.memory.f32.mul [numerator.])
+  ({(const.u32.0x40000000 u32.bitcast-f32) [.c]} stdlib.qwen3.memory.f32.sub [denominator.])
+  ({[.numerator] [.denominator]} stdlib.qwen3.memory.f32.div [ratio.])
+  ({[.lo] [.ratio]} stdlib.qwen3.memory.f32.sub [tail.])
+  ({[.tail] [.hi]} stdlib.qwen3.memory.f32.sub [adjustment.])
+  ({(const.u32.0x3F800000 u32.bitcast-f32) [.adjustment]} stdlib.qwen3.memory.f32.sub [y.])
+  ({[.y] [.n] [.negative]} stdlib.qwen3.exp-scale [scaled-result.])
+  ({[.magnitude] (const.u32.0x39000000)} stdlib.qwen3.memory.u32.less [tiny.])
+  ({(const.u32.0x3F800000 u32.bitcast-f32) [.safe-x]} stdlib.qwen3.memory.f32.add [tiny-result.])
+  ({[.tiny] [.tiny-result] [.scaled-result]} stdlib.qwen3.memory.select-f32 [finite-result.])
+  ({[.negative] (const.u32.0x00000000 u32.bitcast-f32) (const.u32.0x7F800000 u32.bitcast-f32)} stdlib.qwen3.memory.select-f32 [exceptional.])
+  ({[.finite-range] [.finite-result] [.exceptional]} stdlib.qwen3.memory.select-f32 [classified.])
+  ({[.nan] (const.u32.0x7FC00000 u32.bitcast-f32) [.classified]} stdlib.qwen3.memory.select-f32 [result.])
+  [.result]
+ ))
 
 (def program qwen3.silu : (f32 val) -> (f32 val) =
   ([x.]

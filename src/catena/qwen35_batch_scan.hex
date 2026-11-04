@@ -23,7 +23,7 @@
   ({[.alpha-value] [.dt-value]} stdlib.qwen3.memory.f32.add [time-input.])
   ([.time-input] qwen3.softplus [time-step.])
   ({[.time-step] [.a-value]} stdlib.qwen3.memory.f32.mul [gate-raw.])
-  ([.gate-raw] f32.to-bf16 bf16.to-f32 stdlib.qwen35.native-exp [decay.])
+  ([.gate-raw] f32.to-bf16 bf16.to-f32 qwen3.exp [decay.])
   ([.beta-value] qwen3.sigmoid f32.to-bf16 bf16.to-f32 [rate.])
   ({[.lane] (const.u64.0x0000000000000000)} stdlib.qwen3.memory.u64.add [channel0.])
   ({[.key-base] [.channel0]} stdlib.qwen3.memory.u64.add [key-index0.])

@@ -568,7 +568,7 @@
   ({[.alpha-value] [.dt-value]} stdlib.qwen3.memory.f32.add [time-input.])
   ([.time-input] qwen3.softplus [time-step.])
   ({[.time-step] [.a-value]} stdlib.qwen3.memory.f32.mul [gate-raw.])
-  ([.gate-raw] f32.to-bf16 bf16.to-f32 stdlib.qwen35.native-exp [decay.])
+  ([.gate-raw] f32.to-bf16 bf16.to-f32 qwen3.exp [decay.])
   ({[.beta] [.head]} stdlib.qwen3.memory.own-read-bf16 [beta-bf.])
   ([.beta-bf] bf16.to-f32 qwen3.sigmoid f32.to-bf16 bf16.to-f32 [rate.])
   ({(const.u64.0x{{KEY_DIM}}) (const.u64.0x000000000000001F)} stdlib.qwen3.memory.u64.add [padded.])
@@ -668,7 +668,7 @@
   ({[.alpha-value] [.dt-value]} stdlib.qwen3.memory.f32.add [time-input.])
   ([.time-input] qwen3.softplus [time-step.])
   ({[.time-step] [.a-value]} stdlib.qwen3.memory.f32.mul [gate-raw.])
-  ([.gate-raw] f32.to-bf16 bf16.to-f32 stdlib.qwen35.native-exp [decay.])
+  ([.gate-raw] f32.to-bf16 bf16.to-f32 qwen3.exp [decay.])
   ({[.beta] [.head]} stdlib.qwen3.memory.own-read-bf16 [beta-bf.])
   ([.beta-bf] bf16.to-f32 qwen3.sigmoid f32.to-bf16 bf16.to-f32 [rate.])
   ({(const.u64.0x{{KEY_DIM}}) (const.u64.0x000000000000001F)} stdlib.qwen3.memory.u64.add [padded.])
@@ -974,12 +974,4 @@
   ({[.end] [.out] [.callback] core.truth} core.fold.bounded_u64 [complete proof.])
   ([.proof] unsafe.discard unit.elim)
   [.complete]
- ))
-
-# The default DeltaNet scan uses native expf for BF16-rounded decay gates.
-# stdlib.numeric.exp is already an compiler primitive.
-(def program stdlib.qwen35.native-exp : {(f32 val)} -> (f32 val) =
- ([x.]
-  ({[.x] (unit.intro meta.master.value)} smolcat.value.named_at [named.])
-  ({[.named] stdlib.numeric.floating.f32} stdlib.numeric.exp :.forget)
  ))

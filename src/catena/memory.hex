@@ -1035,11 +1035,7 @@
   ([.a id] smolcat.value.named_at [x.])
   ([.x e] stdlib.numeric.negate :.forget)))
 (def program stdlib.qwen3.memory.bf16.exp : (bf16 val) -> (bf16 val) =
- ([a.]
-  ([.] stdlib.numeric.floating.bf16 [e.])
-  ([.] unit.intro meta.bf16numeric.value [id.])
-  ([.a id] smolcat.value.named_at [x.])
-  ([.x e] stdlib.numeric.exp :.forget)))
+ (bf16.to-f32 qwen3.exp f32.to-bf16))
 (def program stdlib.qwen3.memory.u32.equal : {(u32 val) (u32 val)} -> (bool val) =
  ([a b.]
   ([.a b] stdlib.qwen3.memory.u32.less_equal [x0.])

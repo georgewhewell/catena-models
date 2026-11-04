@@ -1,5 +1,5 @@
 # SIMT online cached attention: eight keys per tile, 32 lanes per dot.
-# Native expf, F32 online normalization; BF16 context rounding before Q gate.
+# Shared Hex exponential, F32 online normalization; BF16 context rounding before Q gate.
 
 (def program stdlib.qwen35.online.dot : {((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val) (u64 val) ({(u64 val) (f32 val)} *)} -> (f32 val) =
  ([query cache qb kb lane pair.]
@@ -76,7 +76,7 @@
   ({[.i] (const.u64.0x0000000000000100)} stdlib.qwen3.memory.u64.add [index.])
   ({[.shared] [.index]} stdlib.qwen3.perf.read [score.])
   ({[.score] [.maximum]} stdlib.qwen3.memory.f32.sub [shifted.])
-  ({[.shifted]} stdlib.qwen35.native-exp [prob.])
+  ({[.shifted]} qwen3.exp [prob.])
   ({[.first] [.i]} stdlib.qwen3.memory.u64.add [key.])
   ({[.key] [.keys]} stdlib.qwen3.memory.u64.less [valid.])
   ({[.valid] [.key] (const.u64.0x0000000000000000)} stdlib.qwen3.memory.select-u64 [safe.])
@@ -110,7 +110,7 @@
   ({[.i] (const.u64.0x0000000000000100)} stdlib.qwen3.memory.u64.add [index.])
   ({[.ready] [.index]} stdlib.qwen3.perf.read [score.])
   ({[.score] [.maximum]} stdlib.qwen3.memory.f32.sub [shifted.])
-  ({[.shifted]} stdlib.qwen35.native-exp [probability.])
+  ({[.shifted]} qwen3.exp [probability.])
   ({[.den] [.probability]} stdlib.qwen3.memory.f32.add [next-den.])
   ({[.ready] [.index] [.probability]} stdlib.qwen3.perf.write [written.])
   ({[.next-den] [.written]} *.intro)
@@ -138,7 +138,7 @@
   ([.maximum] meta.perf.complete-f [ready-maximum maximum-phase.])
   ({[.shared] [.maximum-phase]} meta.perf.after-shared [ready.])
   ({[.previous] [.ready-maximum]} stdlib.qwen3.memory.f32.sub [difference.])
-  ({[.difference]} stdlib.qwen35.native-exp [alpha.])
+  ({[.difference]} qwen3.exp [alpha.])
   ({[.ready] (const.u64.0x0000000000000109) [.ready-maximum]} stdlib.qwen3.perf.write [max-written.])
   ({[.shared] [.max-written]} meta.perf.after-shared [max-ready.])
   ({[.max-ready] (const.u64.0x0000000000000108) [.alpha]} stdlib.qwen3.perf.write [alpha-written.])
