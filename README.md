@@ -38,7 +38,8 @@ generated tokens, so SIMT remains the default. Set `CATENA_WMMA_COMPONENTS=safe`
 with that flag to use the exact tiled attention variant and, for MoE, exact
 experts. Dense FFNs retain SIMT arithmetic in this safe selection.
 See [prefill measurements](PREFILL_BENCHMARKS.md)
-for numerical checks and component ablations.
+for numerical checks and component ablations. On CUDA, set
+`CATENA_WMMA_EMULATE=1` to use `--wmma-prefill` with WMMA emulation.
 
 The `:variant` suffix selects an unambiguous checkpoint, including split BF16
 checkpoints. Image projectors come from the same repository or an explicit

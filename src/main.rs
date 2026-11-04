@@ -23,7 +23,7 @@ struct Args {
     #[arg(long, value_enum, default_value_t = KernelKind::Fused)]
     kernels: KernelKind,
 
-    /// Use experimental RDNA3 WMMA prefill for dense/MoE Qwen3.5 models.
+    /// Use experimental RDNA3 WMMA prefill (CUDA requires CATENA_WMMA_EMULATE=1).
     #[arg(long)]
     wmma_prefill: bool,
 
@@ -83,8 +83,10 @@ struct Args {
 fn inference_options(args: &Args) -> Result<InferenceOptions> {
     let dialect = catena_models::model::configured_gpu_dialect()?;
     ensure!(
-        !args.wmma_prefill || dialect == catena_lang::runtime::GpuDialect::Hip,
-        "--wmma-prefill requires the HIP backend on gfx11"
+        !args.wmma_prefill
+            || dialect == catena_lang::runtime::GpuDialect::Hip
+            || std::env::var_os("CATENA_WMMA_EMULATE").is_some_and(|value| value == "1"),
+        "--wmma-prefill requires the HIP backend on gfx11 or CATENA_WMMA_EMULATE=1"
     );
     Ok(InferenceOptions::default()
         .with_kernels(args.kernels)
