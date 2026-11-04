@@ -4,11 +4,11 @@
 
 (def program stdlib.qwen3.embedding : {((cap.ref mem) val) ((cap.ref mem) val) ((cap.own mem) val) (u64 val) (u64 val)} -> 1 =
  ([tokens weight out token-index index.]
-  ({[.tokens] [.token-index]} stdlib.qwen3.memory.ref-read-u64 [token.])
-  ({[.token] (const.u64.0x{{HIDDEN_SIZE}})} stdlib.qwen3.memory.u64.mul [base.])
-  ({[.base] [.index]} stdlib.qwen3.memory.u64.add [offset.])
-  ({[.weight] [.offset]} stdlib.qwen3.memory.ref-read-bf16 [value.])
-  ({[.out] [.index] [.value]} stdlib.qwen3.memory.write-bf16)
+  ({[.tokens] [.token-index]} stdlib.models.memory.ref-read-u64 [token.])
+  ({[.token] (const.u64.0x{{HIDDEN_SIZE}})} stdlib.models.memory.u64.mul [base.])
+  ({[.base] [.index]} stdlib.models.memory.u64.add [offset.])
+  ({[.weight] [.offset]} stdlib.models.memory.ref-read-bf16 [value.])
+  ({[.out] [.index] [.value]} stdlib.models.memory.write-bf16)
   (unit.elim)
   (unit.intro)
  ))
@@ -30,8 +30,8 @@
  ))
 (def program stdlib.qwen3.embedding.launch : {((cap.ref mem) val) ((cap.ref mem) val) ((cap.own mem) val) (u64 val) (u64 val) ({({master.block ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid} stdlib.gpu.geometry.type.Block)} :) (({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid master.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
  ([tokens weight out token-index count pair.]
-  ([.pair] stdlib.qwen3.memory.thread-index [index.])
-  ({[.index] [.count]} stdlib.qwen3.memory.u64.less [valid.])
+  ([.pair] stdlib.models.memory.thread-index [index.])
+  ({[.index] [.count]} stdlib.models.memory.u64.less [valid.])
   ({[.valid] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [condition.])
   ({[.tokens] [.weight] [.out] [.token-index]} partial.stdlib.qwen3.embedding.yes.4 [yes.])
   ({[.tokens] [.weight] [.out] [.token-index]} partial.stdlib.qwen3.embedding.no.4 [no.])
@@ -40,10 +40,10 @@
 (def program qwen3.embedding-one : {((cap.ref mem) val) ((cap.ref mem) val) (u64 val)} -> ((cap.own mem) val) =
  ([tokens weight token-index.]
   (const.u64.0x{{HIDDEN_SIZE}} [count.])
-  ([.count] stdlib.qwen3.memory.alloc-bf16 [out.])
-  ({[.count] (const.u64.0x00000000000000FF)} stdlib.qwen3.memory.u64.add [padded.])
-  ({[.padded] (const.u64.0x0000000000000100)} stdlib.qwen3.memory.u64.div [blocks.])
-  ([.blocks] stdlib.qwen3.memory.grid [grid.])
+  ([.count] stdlib.models.memory.alloc-bf16 [out.])
+  ({[.count] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
+  ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
+  ([.blocks] stdlib.models.memory.grid [grid.])
   ({[.tokens] [.weight] [.out] [.token-index] [.count] [.grid]} partial.stdlib.qwen3.embedding.host-step.6 [host-callback.])
   ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [host-end.])
   ({[.host-end] [.out] [.host-callback] core.truth} core.fold.bounded_u64 [complete proof.])

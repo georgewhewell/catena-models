@@ -265,7 +265,7 @@ fn emit_layer_selector(s: &mut String, layers: usize, group: &str, weights: &str
         call(
             s,
             &["layer", &index],
-            "stdlib.qwen3.memory.u32.equal",
+            "stdlib.models.memory.u32.equal",
             &format!("is-layer{layer}"),
         );
         call(
@@ -380,7 +380,7 @@ fn graph_source(config: &ModelConfig, options: InferenceOptions) -> Result<Strin
         ],
         "({({((cap.own mem) val) ((cap.own mem) val)} *) (prop.Truth |-)} *)",
     );
-    s.push_str("  ([.pair] *.elim [index rest.])\n  ([.rest] *.elim [state proofs.])\n  ([.proofs] *.elim [less truth.])\n  ([.less] unsafe.discard unit.elim)\n  ([.index] :.forget [layer-u32.])\n  ([.layer-u32] stdlib.qwen3.memory.u32.to-u64 [layer.])\n  ([.state] *.elim [cache hidden.])\n");
+    s.push_str("  ([.pair] *.elim [index rest.])\n  ([.rest] *.elim [state proofs.])\n  ([.proofs] *.elim [less truth.])\n  ([.less] unsafe.discard unit.elim)\n  ([.index] :.forget [layer-u32.])\n  ([.layer-u32] stdlib.models.memory.u32.to-u64 [layer.])\n  ([.state] *.elim [cache hidden.])\n");
     call(
         &mut s,
         &["weights", "layer-u32"],
@@ -411,7 +411,7 @@ fn graph_source(config: &ModelConfig, options: InferenceOptions) -> Result<Strin
     call(
         &mut s,
         &["start", "index"],
-        "stdlib.qwen3.memory.u64.add",
+        "stdlib.models.memory.u64.add",
         "position",
     );
     call(
@@ -423,7 +423,7 @@ fn graph_source(config: &ModelConfig, options: InferenceOptions) -> Result<Strin
     call(
         &mut s,
         &["previous", "embedded"],
-        "qwen3.free-bf16-before",
+        "stdlib.models.resources.free-bf16-before",
         "hidden",
     );
     call(&mut s, &["position"], "qwen3.rope-one", "rope");
@@ -444,7 +444,7 @@ fn graph_source(config: &ModelConfig, options: InferenceOptions) -> Result<Strin
     call(
         &mut s,
         &["rope", "final-hidden"],
-        "qwen3.free-f32-before",
+        "stdlib.models.resources.free-f32-before",
         "hidden-result",
     );
     s.push_str("  ({[.final-cache] [.hidden-result]} *.intro)\n ))\n");
@@ -456,7 +456,7 @@ fn graph_source(config: &ModelConfig, options: InferenceOptions) -> Result<Strin
         &adapter_inputs,
         "({({((cap.own mem) val) ((cap.own mem) val)} *) (prop.Truth |-)} *)",
     );
-    s.push_str("  ([.pair] *.elim [index rest.])\n  ([.rest] *.elim [state proofs.])\n  ([.proofs] *.elim [less truth.])\n  ([.less] unsafe.discard unit.elim)\n  ([.index] :.forget stdlib.qwen3.memory.u32.to-u64 [i.])\n  ({[.i] [.state]} *.intro [arguments.])\n");
+    s.push_str("  ([.pair] *.elim [index rest.])\n  ([.rest] *.elim [state proofs.])\n  ([.proofs] *.elim [less truth.])\n  ([.less] unsafe.discard unit.elim)\n  ([.index] :.forget stdlib.models.memory.u32.to-u64 [i.])\n  ({[.i] [.state]} *.intro [arguments.])\n");
     call(
         &mut s,
         &[
@@ -495,11 +495,11 @@ fn graph_source(config: &ModelConfig, options: InferenceOptions) -> Result<Strin
         .map(|i| format!("group{i}"))
         .collect::<Vec<_>>();
     pack(&mut s, &groups, "weights");
-    s.push_str("  ([.tokens] stdlib.qwen3.memory.ref-count-u64 [sequence.])\n");
+    s.push_str("  ([.tokens] stdlib.models.memory.ref-count-u64 [sequence.])\n");
     call(
         &mut s,
         &[&c(config.hidden_size)],
-        "stdlib.qwen3.memory.alloc-bf16",
+        "stdlib.models.memory.alloc-bf16",
         "initial",
     );
     s.push_str("  ({[.cache] [.initial]} *.intro [state.])\n");
@@ -509,7 +509,7 @@ fn graph_source(config: &ModelConfig, options: InferenceOptions) -> Result<Strin
         "partial.stdlib.qwen3.token-step.fold.5",
         "callback",
     );
-    s.push_str("  ({([.sequence] stdlib.qwen3.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [end.])\n  ({[.end] [.state] [.callback] core.truth} core.fold.bounded [final-state proof.])\n  ([.proof] unsafe.discard unit.elim)\n  ([.final-state] *.elim [cache-final hidden-final.])\n");
+    s.push_str("  ({([.sequence] stdlib.models.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [end.])\n  ({[.end] [.state] [.callback] core.truth} core.fold.bounded [final-state proof.])\n  ([.proof] unsafe.discard unit.elim)\n  ([.final-state] *.elim [cache-final hidden-final.])\n");
     let norm = &names[names.len() - 2];
     let head = &names[names.len() - 1];
     let columns = c(config.hidden_size);
@@ -527,7 +527,7 @@ fn graph_source(config: &ModelConfig, options: InferenceOptions) -> Result<Strin
     call(
         &mut s,
         &["hidden-final", "normalized"],
-        "qwen3.free-bf16-before",
+        "stdlib.models.resources.free-bf16-before",
         "normalized-final",
     );
     call(
@@ -544,7 +544,7 @@ fn graph_source(config: &ModelConfig, options: InferenceOptions) -> Result<Strin
     call(
         &mut s,
         &["normalized-final", "logits"],
-        "qwen3.free-bf16-before",
+        "stdlib.models.resources.free-bf16-before",
         "logits-final",
     );
     call(&mut s, &["logits-final"], "qwen3.argmax", "next-token");

@@ -166,7 +166,11 @@ pub(crate) fn model_source(cfg: &Config) -> String {
         "stdlib.whisper.position",
         &["h0"],
     );
-    b += &call(&[v("conv2"), v("h0")], "qwen3.free-bf16-before", &["start"]);
+    b += &call(
+        &[v("conv2"), v("h0")],
+        "stdlib.models.resources.free-bf16-before",
+        &["start"],
+    );
     let mut hidden = "start".to_string();
     let mut wi = 5;
     for l in 0..cfg.encoder_layers {
@@ -190,7 +194,7 @@ pub(crate) fn model_source(cfg: &Config) -> String {
     );
     b += &call(
         &[v(&hidden), v("normalized")],
-        "qwen3.free-bf16-before",
+        "stdlib.models.resources.free-bf16-before",
         &["result"],
     );
     b += " [.result]\n";
@@ -231,14 +235,18 @@ pub(crate) fn model_source(cfg: &Config) -> String {
             &[&vv],
         );
         let ready = format!("vready{l}");
-        b += &call(&[v(&vr), v(&vv)], "qwen3.free-bf16-before", &[&ready]);
+        b += &call(
+            &[v(&vr), v(&vv)],
+            "stdlib.models.resources.free-bf16-before",
+            &[&ready],
+        );
         outputs.push(k);
         outputs.push(ready);
     }
     let last = outputs.pop().unwrap();
     b += &call(
         &[v("encoder"), v(&last)],
-        "qwen3.free-bf16-before",
+        "stdlib.models.resources.free-bf16-before",
         &["last"],
     );
     outputs.push("last".into());
@@ -302,12 +310,12 @@ pub(crate) fn model_source(cfg: &Config) -> String {
     );
     b += &call(
         &[v(&hidden), v("logits")],
-        "qwen3.free-bf16-before",
+        "stdlib.models.resources.free-bf16-before",
         &["after-hidden"],
     );
     b += &call(
         &[v("normalized"), v("after-hidden")],
-        "qwen3.free-bf16-before",
+        "stdlib.models.resources.free-bf16-before",
         &["result"],
     );
     b += &format!(

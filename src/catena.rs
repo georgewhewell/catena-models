@@ -189,7 +189,7 @@ pub(crate) fn rope_frequency_program(config: &ModelConfig) -> String {
             writeln!(source, "    (const.u64.0x{pair:016X} [pair-{pair:02}.])").unwrap();
             writeln!(
                 source,
-                "    ([.pair pair-{pair:02}] stdlib.qwen3.memory.u64.equal [is-pair-{pair:02}.])"
+                "    ([.pair pair-{pair:02}] stdlib.models.memory.u64.equal [is-pair-{pair:02}.])"
             )
             .unwrap();
         }
@@ -201,7 +201,7 @@ pub(crate) fn rope_frequency_program(config: &ModelConfig) -> String {
             };
             writeln!(
                 source,
-                "    ([.is-pair-{pair:02} frequency-{pair:02} {fallback}] stdlib.qwen3.memory.select-f32 [selected-{pair:02}.])"
+                "    ([.is-pair-{pair:02} frequency-{pair:02} {fallback}] stdlib.models.memory.select-f32 [selected-{pair:02}.])"
             )
             .unwrap();
         }
@@ -244,4 +244,61 @@ pub(crate) fn rename_programs(
     }
     out += &token(&source[start..], mapping);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_helpers_prune_and_keep_callback_dependencies() -> Result<()> {
+        let cooperative = include_str!("catena/cooperative.hex");
+        let start = cooperative
+            .find("(def program stdlib.models.coop.reduce-add :")
+            .unwrap();
+        let end = cooperative[start + 1..].find("(def program ").unwrap() + start + 1;
+        // Export the real reduction body to exercise its partial callbacks.
+        let reduction = cooperative[start..end].replacen(
+            "(def program stdlib.models.coop.reduce-add :",
+            "(def program test-reduce :",
+            1,
+        );
+        let raw = metacat::theory::RawTheorySet::from_texts(
+            core_sources().map(|s| -> &str { s }).chain([
+                include_str!("catena/memory.hex"),
+                include_str!("catena/numeric.hex"),
+                include_str!("catena/resources.hex"),
+                cooperative,
+                &reduction,
+                "(def program test-math : (f32 val) -> (f32 val) = (stdlib.models.math.silu))",
+            ]),
+        )?;
+        let raw = prepare_sources(raw)?;
+        let programs = &raw.theories[&"program".parse().unwrap()].arrows;
+        for name in [
+            "test-math",
+            "test-reduce",
+            "stdlib.models.math.silu",
+            "stdlib.models.math.exp",
+            "stdlib.models.math.exp-scale",
+            "stdlib.models.memory.select-f32.yes",
+            "stdlib.models.memory.select-f32.no",
+            "stdlib.models.coop.reduce-add-stage.master-fold-u32",
+            "stdlib.models.coop.reduce-add-write.master-fold-u32",
+        ] {
+            assert!(programs.contains_key(&name.parse().unwrap()), "lost {name}");
+        }
+        for name in [
+            "stdlib.models.math.sqrt",
+            "stdlib.models.math.softplus",
+            "stdlib.models.coop.reduce-max",
+            "stdlib.models.resources.free-bf16-before",
+        ] {
+            assert!(
+                !programs.contains_key(&name.parse().unwrap()),
+                "retained {name}"
+            );
+        }
+        Ok(())
+    }
 }

@@ -104,7 +104,7 @@ impl GraphRuntime<'_> {
         let mut body = String::new();
         body.push_str(&format!("{} [value0.]\n", f(values[0])));
         for (i, value) in values.iter().enumerate().skip(1) {
-            body.push_str(&format!("({{{} [.i]}} stdlib.qwen3.memory.u64.less_equal [p{i}.])\n ({{[.p{i}] {} [.value{}]}} stdlib.qwen3.memory.select-f32 [value{i}.])\n", c(i as u64), f(*value),i-1));
+            body.push_str(&format!("({{{} [.i]}} stdlib.models.memory.u64.less_equal [p{i}.])\n ({{[.p{i}] {} [.value{}]}} stdlib.models.memory.select-f32 [value{i}.])\n", c(i as u64), f(*value),i-1));
         }
         let body = format!(
             " ([.element] [i.])\n ({body} [.value{}] [value.])\n",

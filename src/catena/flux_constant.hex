@@ -3,7 +3,7 @@
 (def program stdlib.flux.CONSTANT-NAME.element : {((cap.own mem) val) (u64 val)} -> 1 =
  ([out element.]
 {{VALUE_BODY}}
- ({[.out] [.element] [.value]} stdlib.qwen3.memory.write-f32)
+ ({[.out] [.element] [.value]} stdlib.models.memory.write-f32)
  (unit.elim)
  (unit.intro)
  ))
@@ -27,8 +27,8 @@
 
 (def program stdlib.flux.CONSTANT-NAME.launch : {((cap.own mem) val) (u64 val) ({({master.block ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid} stdlib.gpu.geometry.type.Block)} :) (({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid master.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
  ([out work thread.]
- ([.thread] stdlib.qwen3.memory.thread-index [element.])
- ({[.element] [.work]} stdlib.qwen3.memory.u64.less [in-bounds.])
+ ([.thread] stdlib.models.memory.thread-index [element.])
+ ({[.element] [.work]} stdlib.models.memory.u64.less [in-bounds.])
  ({[.in-bounds] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [condition.])
  ({[.out]} partial.stdlib.flux.CONSTANT-NAME.yes.1 [yes.])
  ({[.out]} partial.stdlib.flux.CONSTANT-NAME.no.1 [no.])
@@ -49,10 +49,10 @@
 
 (def program stdlib.flux.CONSTANT-NAME.run : {(u64 val) (u64 val)} -> ((cap.own mem) val) =
  ([work elements.]
- ([.elements] stdlib.qwen3.memory.alloc-f32 [out.])
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.qwen3.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.qwen3.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.qwen3.memory.grid [grid.])
+ ([.elements] stdlib.models.memory.alloc-f32 [out.])
+ ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
+ ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
+ ({[.blocks]} stdlib.models.memory.grid [grid.])
  ({[.out] [.work] [.grid]} partial.stdlib.flux.CONSTANT-NAME.host.3 [host.])
  ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
  ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
@@ -62,9 +62,9 @@
 
 (def program stdlib.flux.CONSTANT-NAME.into : {((cap.own mem) val) (u64 val)} -> ((cap.own mem) val) =
  ([out work.]
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.qwen3.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.qwen3.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.qwen3.memory.grid [grid.])
+ ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
+ ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
+ ({[.blocks]} stdlib.models.memory.grid [grid.])
  ({[.out] [.work] [.grid]} partial.stdlib.flux.CONSTANT-NAME.host.3 [host.])
  ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
  ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])

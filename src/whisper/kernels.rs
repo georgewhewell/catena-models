@@ -74,9 +74,9 @@ fn free(old: &str, after: &str, result: &str, bf16: bool) -> String {
     invoke(
         &[old, after],
         if bf16 {
-            "qwen3.free-bf16-before"
+            "stdlib.models.resources.free-bf16-before"
         } else {
-            "qwen3.free-f32-before"
+            "stdlib.models.resources.free-f32-before"
         },
         &[result],
     )
@@ -321,15 +321,15 @@ fn generation(cfg: &Config, debug: bool) -> String {
     body += &pack(&env, "env");
     body += &call(
         &[c(bound), v("limit")],
-        "stdlib.qwen3.memory.u64.less",
+        "stdlib.models.memory.u64.less",
         &["clamp".into()],
     );
     body += &call(
         &[v("clamp"), c(bound), v("limit")],
-        "stdlib.qwen3.memory.select-u64",
+        "stdlib.models.memory.select-u64",
         &["bounded".into()],
     );
-    body += " ([.bounded] stdlib.qwen3.memory.fold-count-u32 [bound32.])\n ({[.bound32] (unit.intro meta.master.end32)} smolcat.value.named_at [end.])\n ({[.env]} partial.stdlib.whisper.iterate.fold.1 [callback.])\n ({[.end] [.initial] [.callback] core.truth} core.fold.bounded [final proof.])\n ([.proof] unsafe.discard unit.elim)\n";
+    body += " ([.bounded] stdlib.models.memory.fold-count-u32 [bound32.])\n ({[.bound32] (unit.intro meta.master.end32)} smolcat.value.named_at [end.])\n ({[.env]} partial.stdlib.whisper.iterate.fold.1 [callback.])\n ({[.end] [.initial] [.callback] core.truth} core.fold.bounded [final proof.])\n ([.proof] unsafe.discard unit.elim)\n";
     let final_names = state
         .iter()
         .map(|n| format!("final-{n}"))
@@ -379,7 +379,7 @@ fn render(cfg: &Config, debug: bool) -> String {
         .replacen(U, O, 1)
         .replacen(R, O, 2)
         .replace(
-            " ({[.pos] (const.u64.0x0000000000000001)} stdlib.qwen3.memory.u64.add [valid.])\n",
+            " ({[.pos] (const.u64.0x0000000000000001)} stdlib.models.memory.u64.add [valid.])\n",
             "",
         )
         .replace("[.valid]", "[.pos]")

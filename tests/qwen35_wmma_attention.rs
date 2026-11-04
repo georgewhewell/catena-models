@@ -30,7 +30,7 @@ fn compile_attention_config(kind: u8) -> anyhow::Result<RuntimeModule> {
             .unwrap()];
     let div = include_str!("../src/catena/qwen35_attention.hex");
     let div = &div[div
-        .find("(def program stdlib.qwen3.memory.u64.ceil_div :")
+        .find("(def program stdlib.models.memory.u64.ceil_div :")
         .unwrap()..];
     let mut source = [
         norm,

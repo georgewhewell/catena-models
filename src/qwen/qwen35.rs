@@ -25,7 +25,12 @@ fn finish(s: &mut String) {
     s.push_str("\n ))\n");
 }
 fn free(s: &mut String, old: &str, after: &str, output: &str) {
-    call(s, &[old, after], "qwen3.free-bf16-before", output);
+    call(
+        s,
+        &[old, after],
+        "stdlib.models.resources.free-bf16-before",
+        output,
+    );
 }
 fn floats(n: usize) -> String {
     format!("(const.u32.0x{:08X} u32.bitcast-f32)", (n as f32).to_bits())
@@ -210,7 +215,7 @@ fn emit_attention_branches(s: &mut String) {
             call(
                 s,
                 &["scores-ready", "probabilities"],
-                "qwen3.free-f32-before",
+                "stdlib.models.resources.free-f32-before",
                 "prob-ready",
             );
             call(
@@ -307,7 +312,7 @@ fn replace_moe_decoder(s: &mut String, name: &str, linear: bool) -> Result<()> {
         call(
             &mut attention,
             &["sequence", &c(1)],
-            "stdlib.qwen3.memory.u64.equal",
+            "stdlib.models.memory.u64.equal",
             "decode",
         );
         attention.push_str("  ({[.decode] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [attention-condition.])\n");
@@ -528,7 +533,7 @@ pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<
         .find("(def program stdlib.qwen3.select-layer.yes")
         .unwrap();
     // Preserve kernel definitions appended after the reference entrypoint.
-    let kernels = s[s.find("(def program stdlib.qwen3.perf.grid").unwrap()..].to_owned();
+    let kernels = s[s.find("(def program stdlib.models.coop.grid").unwrap()..].to_owned();
     s.truncate(cut);
     s.push_str(&kernels);
     // Match the default BF16 GEMV's 256-lane accumulation tree for the first
@@ -733,26 +738,26 @@ pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<
     call(
         &mut scalar_score,
         &["query-base", &c(2)],
-        "stdlib.qwen3.memory.u64.mul",
+        "stdlib.models.memory.u64.mul",
         "qb",
     );
     call(
         &mut scalar_score,
         &["key-base", &c(2)],
-        "stdlib.qwen3.memory.u64.mul",
+        "stdlib.models.memory.u64.mul",
         "kb",
     );
     for (buffer, base, prefix) in [("query", "qb", "q"), ("cache", "kb", "k")] {
         call(
             &mut scalar_score,
             &[base, "i"],
-            "stdlib.qwen3.memory.u64.add",
+            "stdlib.models.memory.u64.add",
             &format!("{prefix}-address"),
         );
         call(
             &mut scalar_score,
             &[buffer, &format!("{prefix}-address")],
-            "stdlib.qwen3.memory.own-read-bf16",
+            "stdlib.models.memory.own-read-bf16",
             &format!("{prefix}-bf"),
         );
         writeln!(scalar_score, "  ([.{prefix}-bf] bf16.to-f32 [{prefix}.])").unwrap();
@@ -760,13 +765,13 @@ pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<
     call(
         &mut scalar_score,
         &["q", "k"],
-        "stdlib.qwen3.memory.f32.mul",
+        "stdlib.models.memory.f32.mul",
         "product",
     );
     call(
         &mut scalar_score,
         &["acc", "product"],
-        "stdlib.qwen3.memory.f32.add",
+        "stdlib.models.memory.f32.add",
         "sum",
     );
     scalar_score.push_str("  [.sum]");
@@ -925,20 +930,20 @@ pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<
         "stdlib.qwen35.linear-weights",
         "linear-selected",
     );
-    s.push_str("  ([.index-value] stdlib.qwen3.memory.u32.to-u64 [layer.])\n");
+    s.push_str("  ([.index-value] stdlib.models.memory.u32.to-u64 [layer.])\n");
     // Count membership through scalar equality and select; no layout assumptions.
     let mut previous = "(const.u32.0x00000000)".to_owned();
     for (i, &l) in full.iter().enumerate() {
         call(
             &mut s,
             &["index-value", &format!("(const.u32.0x{l:08X})")],
-            "stdlib.qwen3.memory.u32.equal",
+            "stdlib.models.memory.u32.equal",
             &format!("is-full{i}"),
         );
         call(
             &mut s,
             &[&format!("is-full{i}"), "(const.u32.0x00000001)", &previous],
-            "stdlib.qwen3.memory.select-u32",
+            "stdlib.models.memory.select-u32",
             &format!("full-flag{i}"),
         );
         previous = format!("full-flag{i}");
@@ -946,7 +951,7 @@ pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<
     call(
         &mut s,
         &[&previous, "(const.u32.0x00000001)"],
-        "stdlib.qwen3.memory.u32.equal",
+        "stdlib.models.memory.u32.equal",
         "is-full",
     );
     s.push_str("  ({[.is-full] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [condition.])\n");
@@ -1045,8 +1050,13 @@ pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<
             s = s
                 .lines()
                 .map(|line| {
-                    if line.starts_with(&prefix) && line.contains("qwen3.free-bf16-before") {
-                        line.replace("qwen3.free-bf16-before", "qwen3.keep-bf16-before")
+                    if line.starts_with(&prefix)
+                        && line.contains("stdlib.models.resources.free-bf16-before")
+                    {
+                        line.replace(
+                            "stdlib.models.resources.free-bf16-before",
+                            "stdlib.models.resources.keep-bf16-before",
+                        )
                     } else {
                         line.to_owned()
                     }
@@ -1118,25 +1128,25 @@ fn emit_linear_decoder(s: &mut String, c0: &ModelConfig, recurrent: usize, conv:
     call(
         s,
         &["capacity", &c(c0.kv_cache_elements_per_token().unwrap())],
-        "stdlib.qwen3.memory.u64.mul",
+        "stdlib.models.memory.u64.mul",
         "kv-end",
     );
     call(
         s,
         &["layer", &c(recurrent + conv)],
-        "stdlib.qwen3.memory.u64.mul",
+        "stdlib.models.memory.u64.mul",
         "layer-offset",
     );
     call(
         s,
         &["kv-end", "layer-offset"],
-        "stdlib.qwen3.memory.u64.add",
+        "stdlib.models.memory.u64.add",
         "conv-base",
     );
     call(
         s,
         &["layer", &c(recurrent)],
-        "stdlib.qwen3.memory.u64.mul",
+        "stdlib.models.memory.u64.mul",
         "shadow-base",
     );
     call(
@@ -1284,11 +1294,11 @@ fn emit_entry(
     );
     fold_prefix(s);
     unpack(s, "state", &names(&["cache", "shadow", "previous"]));
-    s.push_str("  ([.index-value] stdlib.qwen3.memory.u32.to-u64 [token-index.])\n");
+    s.push_str("  ([.index-value] stdlib.models.memory.u32.to-u64 [token-index.])\n");
     call(
         s,
         &["start", "token-index"],
-        "stdlib.qwen3.memory.u64.add",
+        "stdlib.models.memory.u64.add",
         "position",
     );
     call(
@@ -1302,7 +1312,7 @@ fn emit_entry(
     call(
         s,
         &["tokens"],
-        "stdlib.qwen3.memory.ref-count-u64",
+        "stdlib.models.memory.ref-count-u64",
         "sequence",
     );
     pack(s, &names(&["cache", "shadow", "hidden"]), "initial");
@@ -1335,7 +1345,7 @@ fn emit_entry(
     call(
         s,
         &["rope", "final-hidden"],
-        "qwen3.free-f32-before",
+        "stdlib.models.resources.free-f32-before",
         "result-hidden",
     );
     pack(
@@ -1396,7 +1406,7 @@ fn emit_entry(
         call(
             s,
             &["tokens"],
-            "stdlib.qwen3.memory.ref-count-u64",
+            "stdlib.models.memory.ref-count-u64",
             "sequence",
         );
     }
@@ -1418,7 +1428,7 @@ fn emit_entry(
     call(
         s,
         &[&c(config.hidden_size)],
-        "stdlib.qwen3.memory.alloc-bf16",
+        "stdlib.models.memory.alloc-bf16",
         "initial-hidden",
     );
     pack(
@@ -1464,7 +1474,7 @@ fn emit_entry(
             ),
             "token-callback",
         );
-        s.push_str("  ({([.tokens] stdlib.qwen3.memory.ref-count-u64 stdlib.qwen3.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [token-end.])\n  ({[.token-end] [.initial-state] [.token-callback] core.truth} core.fold.bounded [final-state proof.])\n  ([.proof] unsafe.discard unit.elim)\n");
+        s.push_str("  ({([.tokens] stdlib.models.memory.ref-count-u64 stdlib.models.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [token-end.])\n  ({[.token-end] [.initial-state] [.token-callback] core.truth} core.fold.bounded [final-state proof.])\n  ([.proof] unsafe.discard unit.elim)\n");
     }
     unpack(
         s,
@@ -1565,7 +1575,7 @@ pub(crate) fn multimodal_source(config: &ModelConfig, options: InferenceOptions)
     let body = &entry[entry.find("\n  ({").unwrap()..];
     let allocation = body
         .find(&format!(
-            "  ({{{} }} stdlib.qwen3.memory.alloc-bf16",
+            "  ({{{} }} stdlib.models.memory.alloc-bf16",
             c(config.hidden_size)
         ))
         .unwrap();
@@ -1596,7 +1606,7 @@ pub(crate) fn multimodal_source(config: &ModelConfig, options: InferenceOptions)
         &format!("{{{}}}", vec![OWN; if moe { 11 } else { 4 }].join(" ")),
     );
     mm.push_str(&body[..allocation].replace(
-        "  ({[.tokens] } stdlib.qwen3.memory.ref-count-u64 [sequence.])\n",
+        "  ({[.tokens] } stdlib.models.memory.ref-count-u64 [sequence.])\n",
         "",
     ));
     call(&mut mm, &["positions"], "qwen3.mm-rope-table", "rope");
@@ -1634,7 +1644,7 @@ pub(crate) fn multimodal_source(config: &ModelConfig, options: InferenceOptions)
     call(
         &mut mm,
         &["rope", "decoded-hidden"],
-        "qwen3.free-f32-before",
+        "stdlib.models.resources.free-f32-before",
         "hidden-final",
     );
     mm.push_str(&body[tail..]);

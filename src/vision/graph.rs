@@ -99,7 +99,7 @@ impl Builder {
                 }
                 let next = format!("free-{i}-{name}");
                 body += &format!(
-                    " ({{{} {}}} qwen3.free-f32-before [{next}.])\n",
+                    " ({{{} {}}} stdlib.models.resources.free-f32-before [{next}.])\n",
                     w(aliases.get(name).map(String::as_str).unwrap_or(name)),
                     w(&continuation)
                 );
@@ -128,7 +128,7 @@ pub(crate) fn source(config: &VisionConfig, names: &[String]) -> String {
     };
     // Shape scalars come from the patch buffer at runtime; they do not trigger recompilation.
     let mut prelude = format!(
-        " ([.patches] stdlib.qwen3.memory.ref-count-f32 [elements.])\n ({{[.elements] {}}} stdlib.qwen3.memory.u64.div [rows.])\n ({{[.rows] {}}} stdlib.qwen3.memory.u64.div [merged-rows.])\n ({{[.rows] {}}} stdlib.qwen3.memory.u64.mul [hidden-count.])\n ({{[.rows] {}}} stdlib.qwen3.memory.u64.mul [ff-count.])\n",
+        " ([.patches] stdlib.models.memory.ref-count-f32 [elements.])\n ({{[.elements] {}}} stdlib.models.memory.u64.div [rows.])\n ({{[.rows] {}}} stdlib.models.memory.u64.div [merged-rows.])\n ({{[.rows] {}}} stdlib.models.memory.u64.mul [hidden-count.])\n ({{[.rows] {}}} stdlib.models.memory.u64.mul [ff-count.])\n",
         c(3 * config.patch_size * config.patch_size),
         c(config.merge_size * config.merge_size),
         c(h),

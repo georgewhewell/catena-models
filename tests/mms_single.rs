@@ -19,7 +19,7 @@ fn length_source() -> Vec<String> {
         &model,
         r#"
 (def program check-length : {((cap.own mem) val)} -> ((cap.own mem) val) =
- ([header.] ((const.u64.0x0000000000000002) stdlib.qwen3.memory.alloc-u64 [result.])
+ ([header.] ((const.u64.0x0000000000000002) stdlib.models.memory.alloc-u64 [result.])
  {[.header] (const.u64.0x0000000000000001) [.result]} stdlib.tts.prealloc.metadata))
 "#,
     ]
