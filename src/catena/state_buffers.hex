@@ -3,7 +3,7 @@
 (def program stdlib.qwen3.state.zero-bf16 : {((cap.own mem) val) (u64 val)} -> 1 =
  ([out index.]
   (const.u32.0x00000000 u32.bitcast-f32 f32.to-bf16 [zero.])
-  ({[.out] [.index] [.zero]} stdlib.qwen3.memory.write-bf16 unit.elim)
+  ({[.out] [.index] [.zero]} stdlib.models.memory.write-bf16 unit.elim)
   (unit.intro)
  ))
 
@@ -26,8 +26,8 @@
 
 (def program stdlib.qwen3.state.zero-bf16.launch : {((cap.own mem) val) (u64 val) ({({master.block ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid} stdlib.gpu.geometry.type.Block)} :) (({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid master.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
  ([out count pair.]
-  ([.pair] stdlib.qwen3.memory.thread-index [index.])
-  ({[.index] [.count]} stdlib.qwen3.memory.u64.less [valid.])
+  ([.pair] stdlib.models.memory.thread-index [index.])
+  ({[.index] [.count]} stdlib.models.memory.u64.less [valid.])
   ({[.valid] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [condition.])
   ({[.out]} partial.stdlib.qwen3.state.zero-bf16.yes.1 [yes.])
   ({[.out]} partial.stdlib.qwen3.state.zero-bf16.no.1 [no.])
@@ -47,10 +47,10 @@
 
 (def program stdlib.qwen3.state-zero-bf16 : {(u64 val)} -> ((cap.own mem) val) =
  ([count.]
-  ([.count] stdlib.qwen3.memory.alloc-bf16 [out.])
-  ({[.count] (const.u64.0x00000000000000FF)} stdlib.qwen3.memory.u64.add [padded.])
-  ({[.padded] (const.u64.0x0000000000000100)} stdlib.qwen3.memory.u64.div [blocks.])
-  ([.blocks] stdlib.qwen3.memory.grid [grid.])
+  ([.count] stdlib.models.memory.alloc-bf16 [out.])
+  ({[.count] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
+  ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
+  ([.blocks] stdlib.models.memory.grid [grid.])
   ({[.out] [.count] [.grid]} partial.stdlib.qwen3.state.zero-bf16.host.3 [callback.])
   ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
   ({[.end] [.out] [.callback] core.truth} core.fold.bounded_u64 [complete proof.])
@@ -61,7 +61,7 @@
 (def program stdlib.qwen3.state.zero-f32 : {((cap.own mem) val) (u64 val)} -> 1 =
  ([out index.]
   (const.u32.0x00000000 u32.bitcast-f32 [zero.])
-  ({[.out] [.index] [.zero]} stdlib.qwen3.memory.write-f32 unit.elim)
+  ({[.out] [.index] [.zero]} stdlib.models.memory.write-f32 unit.elim)
   (unit.intro)
  ))
 
@@ -84,8 +84,8 @@
 
 (def program stdlib.qwen3.state.zero-f32.launch : {((cap.own mem) val) (u64 val) ({({master.block ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid} stdlib.gpu.geometry.type.Block)} :) (({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid master.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
  ([out count pair.]
-  ([.pair] stdlib.qwen3.memory.thread-index [index.])
-  ({[.index] [.count]} stdlib.qwen3.memory.u64.less [valid.])
+  ([.pair] stdlib.models.memory.thread-index [index.])
+  ({[.index] [.count]} stdlib.models.memory.u64.less [valid.])
   ({[.valid] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [condition.])
   ({[.out]} partial.stdlib.qwen3.state.zero-f32.yes.1 [yes.])
   ({[.out]} partial.stdlib.qwen3.state.zero-f32.no.1 [no.])
@@ -105,10 +105,10 @@
 
 (def program stdlib.qwen3.state-zero-f32 : {(u64 val)} -> ((cap.own mem) val) =
  ([count.]
-  ([.count] stdlib.qwen3.memory.alloc-f32 [out.])
-  ({[.count] (const.u64.0x00000000000000FF)} stdlib.qwen3.memory.u64.add [padded.])
-  ({[.padded] (const.u64.0x0000000000000100)} stdlib.qwen3.memory.u64.div [blocks.])
-  ([.blocks] stdlib.qwen3.memory.grid [grid.])
+  ([.count] stdlib.models.memory.alloc-f32 [out.])
+  ({[.count] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
+  ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
+  ([.blocks] stdlib.models.memory.grid [grid.])
   ({[.out] [.count] [.grid]} partial.stdlib.qwen3.state.zero-f32.host.3 [callback.])
   ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
   ({[.end] [.out] [.callback] core.truth} core.fold.bounded_u64 [complete proof.])

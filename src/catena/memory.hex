@@ -84,7 +84,7 @@
 (arr meta.master.after-own : {((cap.own mem) val) master.phase} -> ((cap.own mem) val))
 
 })
-(def program stdlib.qwen3.memory.u32.add : {(u32 val) (u32 val)} -> (u32 val) =
+(def program stdlib.models.memory.u32.add : {(u32 val) (u32 val)} -> (u32 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u32 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -95,7 +95,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.u32.sub : {(u32 val) (u32 val)} -> (u32 val) =
+(def program stdlib.models.memory.u32.sub : {(u32 val) (u32 val)} -> (u32 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u32 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -106,7 +106,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.u32.mul : {(u32 val) (u32 val)} -> (u32 val) =
+(def program stdlib.models.memory.u32.mul : {(u32 val) (u32 val)} -> (u32 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u32 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -117,7 +117,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.u32.div : {(u32 val) (u32 val)} -> (u32 val) =
+(def program stdlib.models.memory.u32.div : {(u32 val) (u32 val)} -> (u32 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u32 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -128,7 +128,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.u32.rem : {(u32 val) (u32 val)} -> (u32 val) =
+(def program stdlib.models.memory.u32.rem : {(u32 val) (u32 val)} -> (u32 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u32 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -139,7 +139,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.u32.max : {(u32 val) (u32 val)} -> (u32 val) =
+(def program stdlib.models.memory.u32.max : {(u32 val) (u32 val)} -> (u32 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u32 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -150,21 +150,21 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.u32.less : {(u32 val) (u32 val)} -> (bool val) =
+(def program stdlib.models.memory.u32.less : {(u32 val) (u32 val)} -> (bool val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u32 [x0.])
   ([.a b x0] stdlib.numeric.less [x1.])
   [. x1]
  ))
 
-(def program stdlib.qwen3.memory.u32.less_equal : {(u32 val) (u32 val)} -> (bool val) =
+(def program stdlib.models.memory.u32.less_equal : {(u32 val) (u32 val)} -> (bool val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u32 [x0.])
   ([.a b x0] stdlib.numeric.less_equal [x1.])
   [. x1]
  ))
 
-(def program stdlib.qwen3.memory.u64.add : {(u64 val) (u64 val)} -> (u64 val) =
+(def program stdlib.models.memory.u64.add : {(u64 val) (u64 val)} -> (u64 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u64 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -175,7 +175,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.u64.sub : {(u64 val) (u64 val)} -> (u64 val) =
+(def program stdlib.models.memory.u64.sub : {(u64 val) (u64 val)} -> (u64 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u64 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -186,7 +186,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.u64.mul : {(u64 val) (u64 val)} -> (u64 val) =
+(def program stdlib.models.memory.u64.mul : {(u64 val) (u64 val)} -> (u64 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u64 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -197,7 +197,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.u64.div : {(u64 val) (u64 val)} -> (u64 val) =
+(def program stdlib.models.memory.u64.div : {(u64 val) (u64 val)} -> (u64 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u64 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -208,7 +208,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.u64.rem : {(u64 val) (u64 val)} -> (u64 val) =
+(def program stdlib.models.memory.u64.rem : {(u64 val) (u64 val)} -> (u64 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u64 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -219,7 +219,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.u64.max : {(u64 val) (u64 val)} -> (u64 val) =
+(def program stdlib.models.memory.u64.max : {(u64 val) (u64 val)} -> (u64 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u64 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -230,21 +230,21 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.u64.less : {(u64 val) (u64 val)} -> (bool val) =
+(def program stdlib.models.memory.u64.less : {(u64 val) (u64 val)} -> (bool val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u64 [x0.])
   ([.a b x0] stdlib.numeric.less [x1.])
   [. x1]
  ))
 
-(def program stdlib.qwen3.memory.u64.less_equal : {(u64 val) (u64 val)} -> (bool val) =
+(def program stdlib.models.memory.u64.less_equal : {(u64 val) (u64 val)} -> (bool val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.u64 [x0.])
   ([.a b x0] stdlib.numeric.less_equal [x1.])
   [. x1]
  ))
 
-(def program stdlib.qwen3.memory.f32.add : {(f32 val) (f32 val)} -> (f32 val) =
+(def program stdlib.models.memory.f32.add : {(f32 val) (f32 val)} -> (f32 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.f32 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -255,7 +255,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.f32.sub : {(f32 val) (f32 val)} -> (f32 val) =
+(def program stdlib.models.memory.f32.sub : {(f32 val) (f32 val)} -> (f32 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.f32 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -266,7 +266,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.f32.mul : {(f32 val) (f32 val)} -> (f32 val) =
+(def program stdlib.models.memory.f32.mul : {(f32 val) (f32 val)} -> (f32 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.f32 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -277,7 +277,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.f32.div : {(f32 val) (f32 val)} -> (f32 val) =
+(def program stdlib.models.memory.f32.div : {(f32 val) (f32 val)} -> (f32 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.f32 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -288,7 +288,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.f32.max : {(f32 val) (f32 val)} -> (f32 val) =
+(def program stdlib.models.memory.f32.max : {(f32 val) (f32 val)} -> (f32 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.f32 [x0.])
   ([.] unit.intro meta.master.left [x1.])
@@ -299,21 +299,21 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.f32.less : {(f32 val) (f32 val)} -> (bool val) =
+(def program stdlib.models.memory.f32.less : {(f32 val) (f32 val)} -> (bool val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.f32 [x0.])
   ([.a b x0] stdlib.numeric.less [x1.])
   [. x1]
  ))
 
-(def program stdlib.qwen3.memory.f32.less_equal : {(f32 val) (f32 val)} -> (bool val) =
+(def program stdlib.models.memory.f32.less_equal : {(f32 val) (f32 val)} -> (bool val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.f32 [x0.])
   ([.a b x0] stdlib.numeric.less_equal [x1.])
   [. x1]
  ))
 
-(def program stdlib.qwen3.memory.f32.negate : {(f32 val)} -> (f32 val) =
+(def program stdlib.models.memory.f32.negate : {(f32 val)} -> (f32 val) =
  ([a.]
   ([.] unit.intro meta.master.value [x0.])
   ([.a x0] smolcat.value.named_at [x1.])
@@ -322,7 +322,7 @@
   [. x3]
  ))
 
-(def program stdlib.qwen3.memory.u32.to-f32 : {(u32 val)} -> (f32 val) =
+(def program stdlib.models.memory.u32.to-f32 : {(u32 val)} -> (f32 val) =
  ([a.]
   ([.] unit.intro meta.master.value [x0.])
   ([.a x0] smolcat.value.named_at [x1.])
@@ -330,7 +330,7 @@
   [. x2]
  ))
 
-(def program stdlib.qwen3.memory.u32.to-u64 : {(u32 val)} -> (u64 val) =
+(def program stdlib.models.memory.u32.to-u64 : {(u32 val)} -> (u64 val) =
  ([a.]
   ([.] unit.intro meta.master.value [x0.])
   ([.a x0] smolcat.value.named_at [x1.])
@@ -338,23 +338,23 @@
   [. x2]
  ))
 
-(def program stdlib.qwen3.memory.u64.checked-mul : {(u64 val) (u64 val)} -> (u64 val) =
+(def program stdlib.models.memory.u64.checked-mul : {(u64 val) (u64 val)} -> (u64 val) =
  ([a b.]
   ([.] const.u64.0x0000000000000001 [x0.])
-  ([.a x0] stdlib.qwen3.memory.u64.max [x1.])
+  ([.a x0] stdlib.models.memory.u64.max [x1.])
   ([.] const.u64.0xFFFFFFFFFFFFFFFF [x2.])
-  ([.x2 x1] stdlib.qwen3.memory.u64.div [x3.])
-  ([.b x3] stdlib.qwen3.memory.u64.less_equal [x4.])
+  ([.x2 x1] stdlib.models.memory.u64.div [x3.])
+  ([.b x3] stdlib.models.memory.u64.less_equal [x4.])
   ([.] unit.intro meta.master.predicate [x5.])
   ([.x4 x5] smolcat.value.named_at [x6.])
   ([.x6] stdlib.assert.assert_true [x7 x8.])
   ([.x7] unit.elim)
   ([.x8] unsafe.discard unit.elim)
-  ([.a b] stdlib.qwen3.memory.u64.mul [x9.])
+  ([.a b] stdlib.models.memory.u64.mul [x9.])
   [. x9]
  ))
 
-(def program stdlib.qwen3.memory.select-f32.yes : {({({(f32 val) (f32 val)} *) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> (f32 val) =
+(def program stdlib.models.memory.select-f32.yes : {({({(f32 val) (f32 val)} *) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> (f32 val) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x0] *.elim [x2 x3.])
@@ -364,7 +364,7 @@
   [. x2]
  ))
 
-(def program stdlib.qwen3.memory.select-f32.no : {({({(f32 val) (f32 val)} *) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> (f32 val) =
+(def program stdlib.models.memory.select-f32.no : {({({(f32 val) (f32 val)} *) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> (f32 val) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x0] *.elim [x2 x3.])
@@ -374,20 +374,20 @@
   [. x3]
  ))
 
-(def program stdlib.qwen3.memory.select-f32 : {(bool val) (f32 val) (f32 val)} -> (f32 val) =
+(def program stdlib.models.memory.select-f32 : {(bool val) (f32 val) (f32 val)} -> (f32 val) =
  ([condition yes no.]
   ([.] unit.intro meta.master.predicate [x0.])
   ([.condition x0] smolcat.value.named_at [x1.])
   ([.yes no] *.intro [x2.])
-  ([.] name.stdlib.qwen3.memory.select-f32.yes lift [x3.])
-  ([.] name.stdlib.qwen3.memory.select-f32.no lift [x4.])
+  ([.] name.stdlib.models.memory.select-f32.yes lift [x3.])
+  ([.] name.stdlib.models.memory.select-f32.no lift [x4.])
   ([.x1] :.forget [x5.])
   ([.] unit.intro [x6.])
   ([.x5 x2 x3 x4 x6] core.if [x7.])
   [. x7]
  ))
 
-(def program stdlib.qwen3.memory.select-u64.yes : {({({(u64 val) (u64 val)} *) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> (u64 val) =
+(def program stdlib.models.memory.select-u64.yes : {({({(u64 val) (u64 val)} *) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> (u64 val) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x0] *.elim [x2 x3.])
@@ -397,7 +397,7 @@
   [. x2]
  ))
 
-(def program stdlib.qwen3.memory.select-u64.no : {({({(u64 val) (u64 val)} *) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> (u64 val) =
+(def program stdlib.models.memory.select-u64.no : {({({(u64 val) (u64 val)} *) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> (u64 val) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x0] *.elim [x2 x3.])
@@ -407,20 +407,20 @@
   [. x3]
  ))
 
-(def program stdlib.qwen3.memory.select-u64 : {(bool val) (u64 val) (u64 val)} -> (u64 val) =
+(def program stdlib.models.memory.select-u64 : {(bool val) (u64 val) (u64 val)} -> (u64 val) =
  ([condition yes no.]
   ([.] unit.intro meta.master.predicate [x0.])
   ([.condition x0] smolcat.value.named_at [x1.])
   ([.yes no] *.intro [x2.])
-  ([.] name.stdlib.qwen3.memory.select-u64.yes lift [x3.])
-  ([.] name.stdlib.qwen3.memory.select-u64.no lift [x4.])
+  ([.] name.stdlib.models.memory.select-u64.yes lift [x3.])
+  ([.] name.stdlib.models.memory.select-u64.no lift [x4.])
   ([.x1] :.forget [x5.])
   ([.] unit.intro [x6.])
   ([.x5 x2 x3 x4 x6] core.if [x7.])
   [. x7]
  ))
 
-(def program stdlib.qwen3.memory.select-u32.yes : {({({(u32 val) (u32 val)} *) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> (u32 val) =
+(def program stdlib.models.memory.select-u32.yes : {({({(u32 val) (u32 val)} *) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> (u32 val) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x0] *.elim [x2 x3.])
@@ -430,7 +430,7 @@
   [. x2]
  ))
 
-(def program stdlib.qwen3.memory.select-u32.no : {({({(u32 val) (u32 val)} *) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> (u32 val) =
+(def program stdlib.models.memory.select-u32.no : {({({(u32 val) (u32 val)} *) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> (u32 val) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x0] *.elim [x2 x3.])
@@ -440,20 +440,20 @@
   [. x3]
  ))
 
-(def program stdlib.qwen3.memory.select-u32 : {(bool val) (u32 val) (u32 val)} -> (u32 val) =
+(def program stdlib.models.memory.select-u32 : {(bool val) (u32 val) (u32 val)} -> (u32 val) =
  ([condition yes no.]
   ([.] unit.intro meta.master.predicate [x0.])
   ([.condition x0] smolcat.value.named_at [x1.])
   ([.yes no] *.intro [x2.])
-  ([.] name.stdlib.qwen3.memory.select-u32.yes lift [x3.])
-  ([.] name.stdlib.qwen3.memory.select-u32.no lift [x4.])
+  ([.] name.stdlib.models.memory.select-u32.yes lift [x3.])
+  ([.] name.stdlib.models.memory.select-u32.no lift [x4.])
   ([.x1] :.forget [x5.])
   ([.] unit.intro [x6.])
   ([.x5 x2 x3 x4 x6] core.if [x7.])
   [. x7]
  ))
 
-(def program stdlib.qwen3.memory.select-ref.yes : {({({((cap.ref mem) val) ((cap.ref mem) val)} *) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> ((cap.ref mem) val) =
+(def program stdlib.models.memory.select-ref.yes : {({({((cap.ref mem) val) ((cap.ref mem) val)} *) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> ((cap.ref mem) val) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x0] *.elim [x2 x3.])
@@ -463,7 +463,7 @@
   [. x2]
  ))
 
-(def program stdlib.qwen3.memory.select-ref.no : {({({((cap.ref mem) val) ((cap.ref mem) val)} *) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> ((cap.ref mem) val) =
+(def program stdlib.models.memory.select-ref.no : {({({((cap.ref mem) val) ((cap.ref mem) val)} *) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> ((cap.ref mem) val) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x0] *.elim [x2 x3.])
@@ -473,20 +473,20 @@
   [. x3]
  ))
 
-(def program stdlib.qwen3.memory.select-ref : {(bool val) ((cap.ref mem) val) ((cap.ref mem) val)} -> ((cap.ref mem) val) =
+(def program stdlib.models.memory.select-ref : {(bool val) ((cap.ref mem) val) ((cap.ref mem) val)} -> ((cap.ref mem) val) =
  ([condition yes no.]
   ([.] unit.intro meta.master.predicate [x0.])
   ([.condition x0] smolcat.value.named_at [x1.])
   ([.yes no] *.intro [x2.])
-  ([.] name.stdlib.qwen3.memory.select-ref.yes lift [x3.])
-  ([.] name.stdlib.qwen3.memory.select-ref.no lift [x4.])
+  ([.] name.stdlib.models.memory.select-ref.yes lift [x3.])
+  ([.] name.stdlib.models.memory.select-ref.no lift [x4.])
   ([.x1] :.forget [x5.])
   ([.] unit.intro [x6.])
   ([.x5 x2 x3 x4 x6] core.if [x7.])
   [. x7]
  ))
 
-(def program stdlib.qwen3.memory.select-own.yes : {({({((cap.own mem) val) ((cap.own mem) val)} *) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> ((cap.own mem) val) =
+(def program stdlib.models.memory.select-own.yes : {({({((cap.own mem) val) ((cap.own mem) val)} *) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> ((cap.own mem) val) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x0] *.elim [x2 x3.])
@@ -496,7 +496,7 @@
   [. x2]
  ))
 
-(def program stdlib.qwen3.memory.select-own.no : {({({((cap.own mem) val) ((cap.own mem) val)} *) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> ((cap.own mem) val) =
+(def program stdlib.models.memory.select-own.no : {({({((cap.own mem) val) ((cap.own mem) val)} *) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> ((cap.own mem) val) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x0] *.elim [x2 x3.])
@@ -506,20 +506,20 @@
   [. x3]
  ))
 
-(def program stdlib.qwen3.memory.select-own : {(bool val) ((cap.own mem) val) ((cap.own mem) val)} -> ((cap.own mem) val) =
+(def program stdlib.models.memory.select-own : {(bool val) ((cap.own mem) val) ((cap.own mem) val)} -> ((cap.own mem) val) =
  ([condition yes no.]
   ([.] unit.intro meta.master.predicate [x0.])
   ([.condition x0] smolcat.value.named_at [x1.])
   ([.yes no] *.intro [x2.])
-  ([.] name.stdlib.qwen3.memory.select-own.yes lift [x3.])
-  ([.] name.stdlib.qwen3.memory.select-own.no lift [x4.])
+  ([.] name.stdlib.models.memory.select-own.yes lift [x3.])
+  ([.] name.stdlib.models.memory.select-own.no lift [x4.])
   ([.x1] :.forget [x5.])
   ([.] unit.intro [x6.])
   ([.x5 x2 x3 x4 x6] core.if [x7.])
   [. x7]
  ))
 
-(def program stdlib.qwen3.memory.select-unit.yes : {({({1 1} *) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> 1 =
+(def program stdlib.models.memory.select-unit.yes : {({({1 1} *) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> 1 =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x0] *.elim [x2 x3.])
@@ -529,7 +529,7 @@
   [. x2]
  ))
 
-(def program stdlib.qwen3.memory.select-unit.no : {({({1 1} *) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> 1 =
+(def program stdlib.models.memory.select-unit.no : {({({1 1} *) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> 1 =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x0] *.elim [x2 x3.])
@@ -539,20 +539,20 @@
   [. x3]
  ))
 
-(def program stdlib.qwen3.memory.select-unit : {(bool val) 1 1} -> 1 =
+(def program stdlib.models.memory.select-unit : {(bool val) 1 1} -> 1 =
  ([condition yes no.]
   ([.] unit.intro meta.master.predicate [x0.])
   ([.condition x0] smolcat.value.named_at [x1.])
   ([.yes no] *.intro [x2.])
-  ([.] name.stdlib.qwen3.memory.select-unit.yes lift [x3.])
-  ([.] name.stdlib.qwen3.memory.select-unit.no lift [x4.])
+  ([.] name.stdlib.models.memory.select-unit.yes lift [x3.])
+  ([.] name.stdlib.models.memory.select-unit.no lift [x4.])
   ([.x1] :.forget [x5.])
   ([.] unit.intro [x6.])
   ([.x5 x2 x3 x4 x6] core.if [x7.])
   [. x7]
  ))
 
-(def program stdlib.qwen3.memory.own-count-f32 : {((cap.own mem) val)} -> (u64 val) =
+(def program stdlib.models.memory.own-count-f32 : {((cap.own mem) val)} -> (u64 val) =
  ([memory.]
   ([.memory] stdlib.gpu.memory.mem_cast_own_f32 [x0.])
   ([.x0] *.elim [x1 x2.])
@@ -564,7 +564,7 @@
   [. x7]
  ))
 
-(def program stdlib.qwen3.memory.own-count-u64 : {((cap.own mem) val)} -> (u64 val) =
+(def program stdlib.models.memory.own-count-u64 : {((cap.own mem) val)} -> (u64 val) =
  ([memory.]
   ([.memory] stdlib.gpu.memory.mem_cast_own_u64 [x0.])
   ([.x0] *.elim [x1 x2.])
@@ -576,7 +576,7 @@
   [. x7]
  ))
 
-(def program stdlib.qwen3.memory.ref-count-f32 : {((cap.ref mem) val)} -> (u64 val) =
+(def program stdlib.models.memory.ref-count-f32 : {((cap.ref mem) val)} -> (u64 val) =
  ([memory.]
   ([.memory] stdlib.gpu.memory.mem_cast_ref_f32 [x0.])
   ([.x0] *.elim [x1 x2.])
@@ -586,7 +586,7 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.ref-count-u64 : {((cap.ref mem) val)} -> (u64 val) =
+(def program stdlib.models.memory.ref-count-u64 : {((cap.ref mem) val)} -> (u64 val) =
  ([memory.]
   ([.memory] stdlib.gpu.memory.mem_cast_ref_u64 [x0.])
   ([.x0] *.elim [x1 x2.])
@@ -596,9 +596,9 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.own-read-f32 : {((cap.own mem) val) (u64 val)} -> (f32 val) =
+(def program stdlib.models.memory.own-read-f32 : {((cap.own mem) val) (u64 val)} -> (f32 val) =
  ([memory index.]
-  ([.memory] stdlib.qwen3.memory.own-count-f32 [x0.])
+  ([.memory] stdlib.models.memory.own-count-f32 [x0.])
   ([.] unit.intro meta.master.count [x1.])
   ([.x0 x1] smolcat.value.named_at [x2.])
   ([.memory x2] (meta.master.instantiate.0 {{_} (name.stdlib.gpu.memory.global_own_f32 lift)} evaluate {_}) [x3.])
@@ -617,9 +617,9 @@
   [. x15]
  ))
 
-(def program stdlib.qwen3.memory.own-read-u64 : {((cap.own mem) val) (u64 val)} -> (u64 val) =
+(def program stdlib.models.memory.own-read-u64 : {((cap.own mem) val) (u64 val)} -> (u64 val) =
  ([memory index.]
-  ([.memory] stdlib.qwen3.memory.own-count-u64 [x0.])
+  ([.memory] stdlib.models.memory.own-count-u64 [x0.])
   ([.] unit.intro meta.master.count [x1.])
   ([.x0 x1] smolcat.value.named_at [x2.])
   ([.memory x2] (meta.master.instantiate.3 {{_} (name.stdlib.gpu.memory.global_own_u64 lift)} evaluate {_}) [x3.])
@@ -638,9 +638,9 @@
   [. x15]
  ))
 
-(def program stdlib.qwen3.memory.ref-read-f32 : {((cap.ref mem) val) (u64 val)} -> (f32 val) =
+(def program stdlib.models.memory.ref-read-f32 : {((cap.ref mem) val) (u64 val)} -> (f32 val) =
  ([memory index.]
-  ([.memory] stdlib.qwen3.memory.ref-count-f32 [x0.])
+  ([.memory] stdlib.models.memory.ref-count-f32 [x0.])
   ([.] unit.intro meta.master.count [x1.])
   ([.x0 x1] smolcat.value.named_at [x2.])
   ([.memory x2] (meta.master.instantiate.6 {{_} (name.stdlib.gpu.memory.global_ref_f32 lift)} evaluate {_}) [x3.])
@@ -657,9 +657,9 @@
   [. x13]
  ))
 
-(def program stdlib.qwen3.memory.ref-read-u64 : {((cap.ref mem) val) (u64 val)} -> (u64 val) =
+(def program stdlib.models.memory.ref-read-u64 : {((cap.ref mem) val) (u64 val)} -> (u64 val) =
  ([memory index.]
-  ([.memory] stdlib.qwen3.memory.ref-count-u64 [x0.])
+  ([.memory] stdlib.models.memory.ref-count-u64 [x0.])
   ([.] unit.intro meta.master.count [x1.])
   ([.x0 x1] smolcat.value.named_at [x2.])
   ([.memory x2] (meta.master.instantiate.9 {{_} (name.stdlib.gpu.memory.global_ref_u64 lift)} evaluate {_}) [x3.])
@@ -676,9 +676,9 @@
   [. x13]
  ))
 
-(def program stdlib.qwen3.memory.write-f32 : {((cap.own mem) val) (u64 val) (f32 val)} -> 1 =
+(def program stdlib.models.memory.write-f32 : {((cap.own mem) val) (u64 val) (f32 val)} -> 1 =
  ([memory index value.]
-  ([.memory] stdlib.qwen3.memory.own-count-f32 [x0.])
+  ([.memory] stdlib.models.memory.own-count-f32 [x0.])
   ([.] unit.intro meta.master.count [x1.])
   ([.x0 x1] smolcat.value.named_at [x2.])
   ([.memory x2] (meta.master.instantiate.12 {{_} (name.stdlib.gpu.memory.global_own_f32 lift)} evaluate {_}) [x3.])
@@ -697,25 +697,25 @@
   [. x15]
  ))
 
-(def program stdlib.qwen3.memory.alloc-f32 : {(u64 val)} -> ((cap.own mem) val) =
+(def program stdlib.models.memory.alloc-f32 : {(u64 val)} -> ((cap.own mem) val) =
  ([count.]
   ([.] const.u64.0x3FFFFFFFFFFFFFFF [x0.])
-  ([.count x0] stdlib.qwen3.memory.u64.less_equal [x1.])
+  ([.count x0] stdlib.models.memory.u64.less_equal [x1.])
   ([.] unit.intro meta.master.predicate [x2.])
   ([.x1 x2] smolcat.value.named_at [x3.])
   ([.x3] stdlib.assert.assert_true [x4 x5.])
   ([.x4] unit.elim)
   ([.x5] unsafe.discard unit.elim)
   ([.] const.u64.0x0000000000000004 [x6.])
-  ([.count x6] stdlib.qwen3.memory.u64.mul [x7.])
+  ([.count x6] stdlib.models.memory.u64.mul [x7.])
   ([.] stdlib.gpu.memory.memoryelement.f32 [x8.])
   ([.x7 x8] stdlib.gpu.memory.allocate [x9.])
   [. x9]
  ))
 
-(def program stdlib.qwen3.memory.free : {((cap.own mem) val)} -> 1 =
+(def program stdlib.models.memory.free : {((cap.own mem) val)} -> 1 =
  ([memory.]
-  ([.memory] stdlib.qwen3.memory.own-count-f32 [x0.])
+  ([.memory] stdlib.models.memory.own-count-f32 [x0.])
   ([.] unit.intro meta.master.count [x1.])
   ([.x0 x1] smolcat.value.named_at [x2.])
   ([.memory x2] (meta.master.instantiate.17 {{_} (name.stdlib.gpu.memory.global_own_f32 lift)} evaluate {_}) [x3.])
@@ -726,7 +726,7 @@
   [. x8]
  ))
 
-(def program stdlib.qwen3.memory.grid : {(u64 val)} -> ({master.grid ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) =
+(def program stdlib.models.memory.grid : {(u64 val)} -> ({master.grid ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) =
  ([blocks.]
   ([.] unit.intro meta.master.blocks [x0.])
   ([.blocks x0] smolcat.value.named_at [x1.])
@@ -747,7 +747,7 @@
   [. x15]
  ))
 
-(def program stdlib.qwen3.memory.thread-index : {({({master.block ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid} stdlib.gpu.geometry.type.Block)} :) (({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid master.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> (u64 val) =
+(def program stdlib.models.memory.thread-index : {({({master.block ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid} stdlib.gpu.geometry.type.Block)} :) (({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid master.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> (u64 val) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.] unit.intro meta.master.thread [x2.])
@@ -756,7 +756,7 @@
   [. x4]
  ))
 
-(def program stdlib.qwen3.memory.own-count-bf16 : {((cap.own mem) val)} -> (u64 val) =
+(def program stdlib.models.memory.own-count-bf16 : {((cap.own mem) val)} -> (u64 val) =
  ([memory.]
   ([.memory] stdlib.gpu.memory.mem_cast_own_bf16 [x0.])
   ([.x0] *.elim [x1 x2.])
@@ -768,9 +768,9 @@
   [. x7]
  ))
 
-(def program stdlib.qwen3.memory.own-read-bf16 : {((cap.own mem) val) (u64 val)} -> (bf16 val) =
+(def program stdlib.models.memory.own-read-bf16 : {((cap.own mem) val) (u64 val)} -> (bf16 val) =
  ([memory index.]
-  ([.memory] stdlib.qwen3.memory.own-count-bf16 [x0.])
+  ([.memory] stdlib.models.memory.own-count-bf16 [x0.])
   ([.] unit.intro meta.master.count [x1.])
   ([.x0 x1] smolcat.value.named_at [x2.])
   ([.memory x2] (meta.master.bf16-instantiate.0 {{_} (name.stdlib.gpu.memory.global_own_bf16 lift)} evaluate {_}) [x3.])
@@ -789,7 +789,7 @@
   [. x15]
  ))
 
-(def program stdlib.qwen3.memory.own-count-bf16x2 : {((cap.own mem) val)} -> (u64 val) =
+(def program stdlib.models.memory.own-count-bf16x2 : {((cap.own mem) val)} -> (u64 val) =
  ([memory.]
   ([.memory] stdlib.gpu.memory.mem_cast_own_bf16x2 [x0.])
   ([.x0] *.elim [x1 x2.])
@@ -801,9 +801,9 @@
   [. x7]
  ))
 
-(def program stdlib.qwen3.memory.own-read-bf16x2 : {((cap.own mem) val) (u64 val)} -> (bf16x2 val) =
+(def program stdlib.models.memory.own-read-bf16x2 : {((cap.own mem) val) (u64 val)} -> (bf16x2 val) =
  ([memory index.]
-  ([.memory] stdlib.qwen3.memory.own-count-bf16x2 [x0.])
+  ([.memory] stdlib.models.memory.own-count-bf16x2 [x0.])
   ([.] unit.intro meta.master.count [x1.])
   ([.x0 x1] smolcat.value.named_at [x2.])
   ([.memory x2] (meta.master.bf16-instantiate.3 {{_} (name.stdlib.gpu.memory.global_own_bf16x2 lift)} evaluate {_}) [x3.])
@@ -822,7 +822,7 @@
   [. x15]
  ))
 
-(def program stdlib.qwen3.memory.ref-count-bf16 : {((cap.ref mem) val)} -> (u64 val) =
+(def program stdlib.models.memory.ref-count-bf16 : {((cap.ref mem) val)} -> (u64 val) =
  ([memory.]
   ([.memory] stdlib.gpu.memory.mem_cast_ref_bf16 [x0.])
   ([.x0] *.elim [x1 x2.])
@@ -832,9 +832,9 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.ref-read-bf16 : {((cap.ref mem) val) (u64 val)} -> (bf16 val) =
+(def program stdlib.models.memory.ref-read-bf16 : {((cap.ref mem) val) (u64 val)} -> (bf16 val) =
  ([memory index.]
-  ([.memory] stdlib.qwen3.memory.ref-count-bf16 [x0.])
+  ([.memory] stdlib.models.memory.ref-count-bf16 [x0.])
   ([.] unit.intro meta.master.count [x1.])
   ([.x0 x1] smolcat.value.named_at [x2.])
   ([.memory x2] (meta.master.bf16-instantiate.6 {{_} (name.stdlib.gpu.memory.global_ref_bf16 lift)} evaluate {_}) [x3.])
@@ -851,7 +851,7 @@
   [. x13]
  ))
 
-(def program stdlib.qwen3.memory.ref-count-bf16x2 : {((cap.ref mem) val)} -> (u64 val) =
+(def program stdlib.models.memory.ref-count-bf16x2 : {((cap.ref mem) val)} -> (u64 val) =
  ([memory.]
   ([.memory] stdlib.gpu.memory.mem_cast_ref_bf16x2 [x0.])
   ([.x0] *.elim [x1 x2.])
@@ -861,9 +861,9 @@
   [. x5]
  ))
 
-(def program stdlib.qwen3.memory.ref-read-bf16x2 : {((cap.ref mem) val) (u64 val)} -> (bf16x2 val) =
+(def program stdlib.models.memory.ref-read-bf16x2 : {((cap.ref mem) val) (u64 val)} -> (bf16x2 val) =
  ([memory index.]
-  ([.memory] stdlib.qwen3.memory.ref-count-bf16x2 [x0.])
+  ([.memory] stdlib.models.memory.ref-count-bf16x2 [x0.])
   ([.] unit.intro meta.master.count [x1.])
   ([.x0 x1] smolcat.value.named_at [x2.])
   ([.memory x2] (meta.master.bf16-instantiate.9 {{_} (name.stdlib.gpu.memory.global_ref_bf16x2 lift)} evaluate {_}) [x3.])
@@ -880,9 +880,9 @@
   [. x13]
  ))
 
-(def program stdlib.qwen3.memory.write-bf16 : {((cap.own mem) val) (u64 val) (bf16 val)} -> 1 =
+(def program stdlib.models.memory.write-bf16 : {((cap.own mem) val) (u64 val) (bf16 val)} -> 1 =
  ([memory index value.]
-  ([.memory] stdlib.qwen3.memory.own-count-bf16 [x0.])
+  ([.memory] stdlib.models.memory.own-count-bf16 [x0.])
   ([.] unit.intro meta.master.count [x1.])
   ([.x0 x1] smolcat.value.named_at [x2.])
   ([.memory x2] (meta.master.bf16-instantiate.12 {{_} (name.stdlib.gpu.memory.global_own_bf16 lift)} evaluate {_}) [x3.])
@@ -901,39 +901,39 @@
   [. x15]
  ))
 
-(def program stdlib.qwen3.memory.alloc-bf16 : {(u64 val)} -> ((cap.own mem) val) =
+(def program stdlib.models.memory.alloc-bf16 : {(u64 val)} -> ((cap.own mem) val) =
  ([count.]
   ([.] const.u64.0x7FFFFFFFFFFFFFFF [x0.])
-  ([.count x0] stdlib.qwen3.memory.u64.less_equal [x1.])
+  ([.count x0] stdlib.models.memory.u64.less_equal [x1.])
   ([.] unit.intro meta.master.predicate [x2.])
   ([.x1 x2] smolcat.value.named_at [x3.])
   ([.x3] stdlib.assert.assert_true [x4 x5.])
   ([.x4] unit.elim)
   ([.x5] unsafe.discard unit.elim)
   ([.] const.u64.0x0000000000000002 [x6.])
-  ([.count x6] stdlib.qwen3.memory.u64.mul [x7.])
+  ([.count x6] stdlib.models.memory.u64.mul [x7.])
   ([.] stdlib.gpu.memory.memoryelement.bf16 [x8.])
   ([.x7 x8] stdlib.gpu.memory.allocate [x9.])
   [. x9]
  ))
 
-(def program stdlib.qwen3.memory.u64.equal : {(u64 val) (u64 val)} -> (bool val) =
+(def program stdlib.models.memory.u64.equal : {(u64 val) (u64 val)} -> (bool val) =
  ([a b.]
-  ([.a b] stdlib.qwen3.memory.u64.less_equal [x0.])
-  ([.b a] stdlib.qwen3.memory.u64.less_equal [x1.])
+  ([.a b] stdlib.models.memory.u64.less_equal [x0.])
+  ([.b a] stdlib.models.memory.u64.less_equal [x1.])
   ([.x0 x1] stdlib.boolean.and [x2.])
   [. x2]
  ))
 
-(def program stdlib.qwen3.memory.halve-step : {({(u64 val) (u64 val)} *)} -> (u64 val) =
+(def program stdlib.models.memory.halve-step : {({(u64 val) (u64 val)} *)} -> (u64 val) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.] const.u64.0x0000000000000002 [x2.])
-  ([.x1 x2] stdlib.qwen3.memory.u64.div [x3.])
+  ([.x1 x2] stdlib.models.memory.u64.div [x3.])
   [. x3]
  ))
 
-(def program stdlib.qwen3.memory.halve-step.master-fold-u64 : {({({master.index u64} :) ({(u64 val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({(u64 val) (prop.Truth |-)} *) =
+(def program stdlib.models.memory.halve-step.master-fold-u64 : {({({master.index u64} :) ({(u64 val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({(u64 val) (prop.Truth |-)} *) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x1] *.elim [x2 x3.])
@@ -941,14 +941,14 @@
   ([.x4] unsafe.discard unit.elim)
   ([.x0] :.forget [x6.])
   ([.x6 x2] *.intro [x7.])
-  ([.x7] stdlib.qwen3.memory.halve-step [x8.])
+  ([.x7] stdlib.models.memory.halve-step [x8.])
   ([.x8 x5] *.intro [x9.])
   [. x9]
  ))
 
-(def program stdlib.qwen3.memory.u64.shr : {(u64 val) (u64 val)} -> (u64 val) =
+(def program stdlib.models.memory.u64.shr : {(u64 val) (u64 val)} -> (u64 val) =
  ([value bits.]
-  ([.] name.stdlib.qwen3.memory.halve-step.master-fold-u64 lift [x0.])
+  ([.] name.stdlib.models.memory.halve-step.master-fold-u64 lift [x0.])
   ([.] unit.intro meta.master.end [x1.])
   ([.bits x1] smolcat.value.named_at [x2.])
   ([.] core.truth [x3.])
@@ -957,29 +957,29 @@
   [. x4]
  ))
 
-(def program stdlib.qwen3.memory.fold-count-step : {({(u32 val) ({(u64 val) ({(u64 val) ({(u32 val) (u32 val)} *)} *)} *)} *)} -> ({(u64 val) ({(u64 val) ({(u32 val) (u32 val)} *)} *)} *) =
+(def program stdlib.models.memory.fold-count-step : {({(u32 val) ({(u64 val) ({(u64 val) ({(u32 val) (u32 val)} *)} *)} *)} *)} -> ({(u64 val) ({(u64 val) ({(u32 val) (u32 val)} *)} *)} *) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x1] *.elim [x2 x3.])
   ([.x3] *.elim [x4 x5.])
   ([.x5] *.elim [x6 x7.])
-  ([.x4 x2] stdlib.qwen3.memory.u64.less_equal [x8.])
-  ([.x2 x4] stdlib.qwen3.memory.u64.sub [x9.])
-  ([.x8 x9 x2] stdlib.qwen3.memory.select-u64 [x10.])
+  ([.x4 x2] stdlib.models.memory.u64.less_equal [x8.])
+  ([.x2 x4] stdlib.models.memory.u64.sub [x9.])
+  ([.x8 x9 x2] stdlib.models.memory.select-u64 [x10.])
   ([.] const.u32.0x00000000 [x11.])
-  ([.x8 x6 x11] stdlib.qwen3.memory.select-u32 [x12.])
-  ([.x7 x12] stdlib.qwen3.memory.u32.add [x13.])
+  ([.x8 x6 x11] stdlib.models.memory.select-u32 [x12.])
+  ([.x7 x12] stdlib.models.memory.u32.add [x13.])
   ([.] const.u64.0x0000000000000002 [x14.])
-  ([.x4 x14] stdlib.qwen3.memory.u64.div [x15.])
+  ([.x4 x14] stdlib.models.memory.u64.div [x15.])
   ([.] const.u32.0x00000002 [x16.])
-  ([.x6 x16] stdlib.qwen3.memory.u32.div [x17.])
+  ([.x6 x16] stdlib.models.memory.u32.div [x17.])
   ([.x17 x13] *.intro [x18.])
   ([.x15 x18] *.intro [x19.])
   ([.x10 x19] *.intro [x20.])
   [. x20]
  ))
 
-(def program stdlib.qwen3.memory.fold-count-step.master-fold-u32 : {({({master.index u32} :) ({({(u64 val) ({(u64 val) ({(u32 val) (u32 val)} *)} *)} *) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({({(u64 val) ({(u64 val) ({(u32 val) (u32 val)} *)} *)} *) (prop.Truth |-)} *) =
+(def program stdlib.models.memory.fold-count-step.master-fold-u32 : {({({master.index u32} :) ({({(u64 val) ({(u64 val) ({(u32 val) (u32 val)} *)} *)} *) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({({(u64 val) ({(u64 val) ({(u32 val) (u32 val)} *)} *)} *) (prop.Truth |-)} *) =
  ([pair.]
   ([.pair] *.elim [x0 x1.])
   ([.x1] *.elim [x2 x3.])
@@ -987,16 +987,16 @@
   ([.x4] unsafe.discard unit.elim)
   ([.x0] :.forget [x6.])
   ([.x6 x2] *.intro [x7.])
-  ([.x7] stdlib.qwen3.memory.fold-count-step [x8.])
+  ([.x7] stdlib.models.memory.fold-count-step [x8.])
   ([.x8 x5] *.intro [x9.])
   [. x9]
  ))
 
 # Checked loop-count narrowing lowers to one bounds check and a native cast.
-(def program stdlib.qwen3.memory.fold-count-u32 : {(u64 val)} -> (u32 val) =
+(def program stdlib.models.memory.fold-count-u32 : {(u64 val)} -> (u32 val) =
  ([count.] [.count] stdlib.numeric.u64_to_u32))
 
-(def program stdlib.qwen3.memory.bf16.add : {(bf16 val) (bf16 val)} -> (bf16 val) =
+(def program stdlib.models.memory.bf16.add : {(bf16 val) (bf16 val)} -> (bf16 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.bf16 [e.])
   ([.] unit.intro meta.bf16numeric.left [id.])
@@ -1004,7 +1004,7 @@
   ([.] unit.intro meta.bf16numeric.right [rid.])
   ([.b rid] smolcat.value.named_at [y.])
   ([.x y e] stdlib.numeric.+ :.forget)))
-(def program stdlib.qwen3.memory.bf16.sub : {(bf16 val) (bf16 val)} -> (bf16 val) =
+(def program stdlib.models.memory.bf16.sub : {(bf16 val) (bf16 val)} -> (bf16 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.bf16 [e.])
   ([.] unit.intro meta.bf16numeric.left [id.])
@@ -1012,7 +1012,7 @@
   ([.] unit.intro meta.bf16numeric.right [rid.])
   ([.b rid] smolcat.value.named_at [y.])
   ([.x y e] stdlib.numeric.- :.forget)))
-(def program stdlib.qwen3.memory.bf16.mul : {(bf16 val) (bf16 val)} -> (bf16 val) =
+(def program stdlib.models.memory.bf16.mul : {(bf16 val) (bf16 val)} -> (bf16 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.bf16 [e.])
   ([.] unit.intro meta.bf16numeric.left [id.])
@@ -1020,7 +1020,7 @@
   ([.] unit.intro meta.bf16numeric.right [rid.])
   ([.b rid] smolcat.value.named_at [y.])
   ([.x y e] stdlib.numeric.* :.forget)))
-(def program stdlib.qwen3.memory.bf16.div : {(bf16 val) (bf16 val)} -> (bf16 val) =
+(def program stdlib.models.memory.bf16.div : {(bf16 val) (bf16 val)} -> (bf16 val) =
  ([a b.]
   ([.] stdlib.numeric.numeric.bf16 [e.])
   ([.] unit.intro meta.bf16numeric.left [id.])
@@ -1028,26 +1028,26 @@
   ([.] unit.intro meta.bf16numeric.right [rid.])
   ([.b rid] smolcat.value.named_at [y.])
   ([.x y e] stdlib.numeric./ :.forget)))
-(def program stdlib.qwen3.memory.bf16.neg : (bf16 val) -> (bf16 val) =
+(def program stdlib.models.memory.bf16.neg : (bf16 val) -> (bf16 val) =
  ([a.]
   ([.] stdlib.numeric.signed.bf16 [e.])
   ([.] unit.intro meta.bf16numeric.value [id.])
   ([.a id] smolcat.value.named_at [x.])
   ([.x e] stdlib.numeric.negate :.forget)))
-(def program stdlib.qwen3.memory.bf16.exp : (bf16 val) -> (bf16 val) =
- (bf16.to-f32 qwen3.exp f32.to-bf16))
-(def program stdlib.qwen3.memory.u32.equal : {(u32 val) (u32 val)} -> (bool val) =
+(def program stdlib.models.memory.bf16.exp : (bf16 val) -> (bf16 val) =
+ (bf16.to-f32 stdlib.models.math.exp f32.to-bf16))
+(def program stdlib.models.memory.u32.equal : {(u32 val) (u32 val)} -> (bool val) =
  ([a b.]
-  ([.a b] stdlib.qwen3.memory.u32.less_equal [x0.])
-  ([.b a] stdlib.qwen3.memory.u32.less_equal [x1.])
+  ([.a b] stdlib.models.memory.u32.less_equal [x0.])
+  ([.b a] stdlib.models.memory.u32.less_equal [x1.])
   ([.x0 x1] stdlib.boolean.and [x2.])
   [. x2]
  ))
 
-(def program stdlib.qwen3.memory.f32.greater : {(f32 val) (f32 val)} -> (bool val) =
- ([a b.] ({[.b] [.a]} stdlib.qwen3.memory.f32.less)))
+(def program stdlib.models.memory.f32.greater : {(f32 val) (f32 val)} -> (bool val) =
+ ([a b.] ({[.b] [.a]} stdlib.models.memory.f32.less)))
 
-(def program stdlib.qwen3.memory.free-bf16 : ((cap.own mem) val) -> 1 =
+(def program stdlib.models.memory.free-bf16 : ((cap.own mem) val) -> 1 =
  ([memory.]
   ([.memory] stdlib.gpu.memory.mem_cast_own_bf16 *.elim [count rest.])
   ([.rest] *.elim [view proofs.])
@@ -1055,14 +1055,14 @@
   ([.readable] unsafe.discard unit.elim)
   ([.view allocated] stdlib.gpu.memory.free)
  ))
-(def program stdlib.qwen3.memory.alloc-u64 : (u64 val) -> ((cap.own mem) val) =
+(def program stdlib.models.memory.alloc-u64 : (u64 val) -> ((cap.own mem) val) =
  ([count.]
-  ({[.count] (const.u64.0x0000000000000008)} stdlib.qwen3.memory.u64.checked-mul [bytes.])
+  ({[.count] (const.u64.0x0000000000000008)} stdlib.models.memory.u64.checked-mul [bytes.])
   ({[.bytes] stdlib.gpu.memory.memoryelement.u64} stdlib.gpu.memory.allocate)
  ))
-(def program stdlib.qwen3.memory.write-u64 : {((cap.own mem) val) (u64 val) (u64 val)} -> 1 =
+(def program stdlib.models.memory.write-u64 : {((cap.own mem) val) (u64 val) (u64 val)} -> 1 =
  ([memory index value.]
-  ([.memory] stdlib.qwen3.memory.own-count-u64 [x0.])
+  ([.memory] stdlib.models.memory.own-count-u64 [x0.])
   ([.] unit.intro meta.master.count [x1.])
   ([.x0 x1] smolcat.value.named_at [x2.])
   ([.memory x2] (meta.master.u64-write.0 {{_} (name.stdlib.gpu.memory.global_own_u64 lift)} evaluate {_}) [x3.])

@@ -49,20 +49,20 @@ pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<
         call(
             &mut fused,
             &[input, "fused-result"],
-            "qwen3.free-bf16-before",
+            "stdlib.models.resources.free-bf16-before",
             "freed-input",
         );
         call(
             &mut fused,
             &[residual, "freed-input"],
-            "qwen3.free-bf16-before",
+            "stdlib.models.resources.free-bf16-before",
             "freed-residual",
         );
         if target == "attention-result" {
             call(
                 &mut fused,
                 &["normalized", "freed-residual"],
-                "qwen3.free-bf16-before",
+                "stdlib.models.resources.free-bf16-before",
                 target,
             );
         } else {
@@ -98,7 +98,7 @@ pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<
     call(
         &mut gate,
         &["ffn-input", "activated"],
-        "qwen3.free-bf16-before",
+        "stdlib.models.resources.free-bf16-before",
         "gated",
     );
     decoder.replace_range(begin..end, &gate);

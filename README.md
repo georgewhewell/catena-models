@@ -41,13 +41,17 @@ See [prefill measurements](PREFILL_BENCHMARKS.md)
 for numerical checks and component ablations. On CUDA, set
 `CATENA_WMMA_EMULATE=1` to use `--wmma-prefill` with WMMA emulation.
 
-All GPU model exponentials use the shared `qwen3.exp` Hex implementation,
+All GPU model exponentials use the shared `stdlib.models.math.exp` Hex implementation,
 including DeltaNet decay and online attention. It uses fixed F32 arithmetic,
 nearest-even subnormal rounding, and canonical F32 NaNs; its accuracy target is
 at most 1 ULP with round-to-nearest arithmetic and FMA contraction disabled.
 This changes results previously produced by native `expf` or the older Hex
 approximation. Packed-dot arithmetic and host preprocessing still require
 separate work for complete cross-platform bitwise agreement.
+
+Shared Hex helpers live under `stdlib.models.math`, `stdlib.models.memory`,
+`stdlib.models.resources`, and `stdlib.models.coop`. The `stdlib.` prefix keeps
+these helpers private and lets source pruning retain only reachable definitions.
 
 The `:variant` suffix selects an unambiguous checkpoint, including split BF16
 checkpoints. Image projectors come from the same repository or an explicit

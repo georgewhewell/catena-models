@@ -105,43 +105,43 @@ pub(super) fn emit(
     call(
         s,
         &["layer", "capacity"],
-        "stdlib.qwen3.memory.u64.mul",
+        "stdlib.models.memory.u64.mul",
         "layer-capacity",
     );
     call(
         s,
         &["layer-capacity", &c(cfg.key_value_size() * 2)],
-        "stdlib.qwen3.memory.u64.mul",
+        "stdlib.models.memory.u64.mul",
         "key-base",
     );
     call(
         s,
         &["capacity", &c(cfg.key_value_size())],
-        "stdlib.qwen3.memory.u64.mul",
+        "stdlib.models.memory.u64.mul",
         "value-offset",
     );
     call(
         s,
         &["key-base", "value-offset"],
-        "stdlib.qwen3.memory.u64.add",
+        "stdlib.models.memory.u64.add",
         "value-base",
     );
     call(
         s,
         &["start", &c(cfg.key_value_size())],
-        "stdlib.qwen3.memory.u64.mul",
+        "stdlib.models.memory.u64.mul",
         "start-offset",
     );
     call(
         s,
         &["key-base", "start-offset"],
-        "stdlib.qwen3.memory.u64.add",
+        "stdlib.models.memory.u64.add",
         "key-target",
     );
     call(
         s,
         &["value-base", "start-offset"],
-        "stdlib.qwen3.memory.u64.add",
+        "stdlib.models.memory.u64.add",
         "value-target",
     );
     call(
@@ -269,25 +269,25 @@ pub(super) fn emit(
     call(
         s,
         &["capacity", &c(cfg.kv_cache_elements_per_token().unwrap())],
-        "stdlib.qwen3.memory.u64.mul",
+        "stdlib.models.memory.u64.mul",
         "kv-end",
     );
     call(
         s,
         &["layer", &c(recurrent + conv)],
-        "stdlib.qwen3.memory.u64.mul",
+        "stdlib.models.memory.u64.mul",
         "layer-offset",
     );
     call(
         s,
         &["kv-end", "layer-offset"],
-        "stdlib.qwen3.memory.u64.add",
+        "stdlib.models.memory.u64.add",
         "conv-base",
     );
     call(
         s,
         &["layer", &c(recurrent)],
-        "stdlib.qwen3.memory.u64.mul",
+        "stdlib.models.memory.u64.mul",
         "shadow-base",
     );
     call(
@@ -468,7 +468,7 @@ pub(super) fn emit(
         "stdlib.qwen35.linear-weights",
         "linear-selected",
     );
-    s.push_str("  ([.index-value] stdlib.qwen3.memory.u32.to-u64 [layer.])\n");
+    s.push_str("  ([.index-value] stdlib.models.memory.u32.to-u64 [layer.])\n");
     let mut previous = "(const.u32.0x00000000)".to_owned();
     for (i, layer) in (0..cfg.num_layers)
         .filter(|&l| cfg.layer_type(l) == LayerType::FullAttention)
@@ -477,13 +477,13 @@ pub(super) fn emit(
         call(
             s,
             &["index-value", &format!("(const.u32.0x{layer:08X})")],
-            "stdlib.qwen3.memory.u32.equal",
+            "stdlib.models.memory.u32.equal",
             &format!("eq{i}"),
         );
         call(
             s,
             &[&format!("eq{i}"), "(const.u32.0x00000001)", &previous],
-            "stdlib.qwen3.memory.select-u32",
+            "stdlib.models.memory.select-u32",
             &format!("flag{i}"),
         );
         previous = format!("flag{i}");
@@ -491,7 +491,7 @@ pub(super) fn emit(
     call(
         s,
         &[&previous, "(const.u32.0x00000001)"],
-        "stdlib.qwen3.memory.u32.equal",
+        "stdlib.models.memory.u32.equal",
         "is-full",
     );
     s.push_str("  ({[.is-full] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [condition.])\n");
@@ -548,13 +548,13 @@ pub(super) fn emit(
                 &format!("partial.stdlib.qwen35.token.fold.{}", cn.len()),
                 "callback",
             );
-            s.push_str("  ({([.tokens] stdlib.qwen3.memory.ref-count-u64 stdlib.qwen3.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [end.])\n  ({[.end] [.state] [.callback] core.truth} core.fold.bounded [result proof.])\n  ([.proof] unsafe.discard unit.elim)\n  [.result]");
+            s.push_str("  ({([.tokens] stdlib.models.memory.ref-count-u64 stdlib.models.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [end.])\n  ({[.end] [.state] [.callback] core.truth} core.fold.bounded [result proof.])\n  ([.proof] unsafe.discard unit.elim)\n  [.result]");
         } else {
             unpack(s, "state", &names(&["cache", "shadow", "previous"]));
             call(
                 s,
                 &["tokens"],
-                "stdlib.qwen3.memory.ref-count-u64",
+                "stdlib.models.memory.ref-count-u64",
                 "sequence",
             );
             call(
@@ -581,7 +581,7 @@ pub(super) fn emit(
             call(
                 s,
                 &["sequence", &c(1)],
-                "stdlib.qwen3.memory.u64.sub",
+                "stdlib.models.memory.u64.sub",
                 "last",
             );
             call(
@@ -606,13 +606,13 @@ pub(super) fn emit(
     call(
         s,
         &["tokens"],
-        "stdlib.qwen3.memory.ref-count-u64",
+        "stdlib.models.memory.ref-count-u64",
         "sequence",
     );
     call(
         s,
         &["sequence", &c(2)],
-        "stdlib.qwen3.memory.u64.less",
+        "stdlib.models.memory.u64.less",
         "small",
     );
     s.push_str("  ({[.small] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [condition.])\n");

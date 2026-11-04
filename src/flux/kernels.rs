@@ -189,7 +189,7 @@ pub(super) fn text(cfg: &crate::spec::ModelConfig, debug: bool) -> Result<String
     {
         writeln!(
             body,
-            " ({{[.{name}] [.{result}]}} qwen3.free-bf16-before [free{i}.])"
+            " ({{[.{name}] [.{result}]}} stdlib.models.resources.free-bf16-before [free{i}.])"
         )
         .unwrap();
         result = format!("free{i}");
@@ -232,7 +232,7 @@ pub(super) fn text(cfg: &crate::spec::ModelConfig, debug: bool) -> Result<String
     for (i, name) in free.iter().enumerate() {
         writeln!(
             body,
-            " ({{[.{name}] [.{result}]}} qwen3.free-bf16-before [final{i}.])"
+            " ({{[.{name}] [.{result}]}} stdlib.models.resources.free-bf16-before [final{i}.])"
         )
         .unwrap();
         result = format!("final{i}");
