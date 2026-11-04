@@ -258,9 +258,7 @@ pub(super) fn emit(
         call(
             s,
             &["normalized", w, &c(cfg.hidden_size), &c(size)],
-            // DeltaNet amplifies projection rounding differences through its
-            // recurrent state. Keep these four inputs on the exact SIMT tree.
-            "stdlib.qwen35.batch.project",
+            project,
             out,
         );
     }

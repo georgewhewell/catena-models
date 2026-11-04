@@ -94,17 +94,21 @@ attention. Generated gfx1100/gfx1151 code contains
 `--wmma-prefill` selects the experimental native path for dense and MoE
 Qwen3.5/3.6 on HIP gfx11. It includes grouped routed/shared expert gate/up and down projections,
 full-attention Q/K/V and output projections, linear output projections, and
-attention with 64-query tiles. The four recurrent input projections retain the
-original SIMT tree. Attention uses three launches per tile (QK, softmax, PV),
+attention with 64-query tiles. The default `all` selection also uses WMMA for the
+four recurrent inputs (QKV, Z, alpha, and beta); diagnostic selections retain
+their SIMT projections. Attention uses three launches per tile (QK, softmax, PV),
 keeps the BF16 score/probability/context boundaries, and bounds temporary storage
 by 64 query rows rather than the complete query sequence. This is not a
 single-launch fused-attention kernel.
 
-The default remains SIMT because native WMMA currently fails the agreed
-full-model accuracy gate: at most 5% relative logit RMS and matching 20-token
-greedy continuations.
+The flag-off default remains SIMT. The historical native WMMA measurements below
+failed the agreed full-model accuracy gate: at most 5% relative logit RMS and
+matching 20-token greedy continuations.
 
 ### Profiles and throughput
+
+The measurements below predate enabling WMMA for the four recurrent input
+projections; they do not measure the current default `all` selection.
 
 On `unsloth/Qwen3.6-35B-A3B-GGUF:BF16`, gfx1151, the starting PP512 profile
 spent 42.96% in expert down, 35.54% in expert gate/up, and 5.33% in output
@@ -231,8 +235,9 @@ attention/output projections, and the gate/up/down FFN projections in both
 full-attention and DeltaNet layers use the existing WMMA primitives. Dense
 FFNs store gate and up projections as BF16, round SiLU to BF16, and multiply
 with a BF16 result, preserving the existing intermediate precision boundaries.
-The four recurrent DeltaNet inputs retain SIMT projection trees. Decode and
-the default flag-off graph are unchanged.
+The four recurrent DeltaNet inputs use WMMA with the default `all` selection.
+Decode, diagnostic projection selectors, and the default flag-off graph are
+unchanged.
 
 `CATENA_WMMA_COMPONENTS=all` is the flag default. Attention-only selections
 apply to dense models; `safe` keeps dense FFNs and other projections on SIMT

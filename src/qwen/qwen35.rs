@@ -508,7 +508,15 @@ pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<
     } else {
         "none".into()
     };
-    let wmma = wmma_stages(config, &scope)?;
+    source_with_scope(config, options, &scope)
+}
+
+fn source_with_scope(
+    config: &ModelConfig,
+    options: InferenceOptions,
+    scope: &str,
+) -> Result<String> {
+    let wmma = wmma_stages(config, scope)?;
     let full = (0..config.num_layers)
         .filter(|&l| config.layer_type(l) == LayerType::FullAttention)
         .collect::<Vec<_>>();
@@ -1073,6 +1081,73 @@ pub(crate) fn source(config: &ModelConfig, options: InferenceOptions) -> Result<
     }
     crate::session_graph::append_layout(&mut s, config, options);
     Ok(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn definition<'a>(source: &'a str, name: &str) -> &'a str {
+        let start = source.find(&format!("(def program {name} :")).unwrap();
+        let end = source[start + 1..]
+            .find("(def program ")
+            .map_or(source.len(), |n| start + 1 + n);
+        &source[start..end]
+    }
+
+    #[test]
+    fn deltanet_prefill_follows_projection_scope_and_preserves_decode() -> Result<()> {
+        for config in [ModelConfig::qwen35_0_8b(), ModelConfig::qwen36_35b_a3b()] {
+            let options = InferenceOptions::default().with_wmma_prefill(true);
+            let original = source_with_scope(&config, options, "none")?;
+            for scope in [
+                "all",
+                "safe",
+                "attention",
+                "exact-attention",
+                "safe-attention",
+                "none",
+                "experts",
+                "exact-experts",
+                "safe-experts",
+            ] {
+                if config.architecture == ModelArchitecture::Qwen35Dense
+                    && matches!(scope, "experts" | "exact-experts" | "safe-experts")
+                {
+                    continue;
+                }
+                let generated = source_with_scope(&config, options, scope)?;
+                let linear = definition(&generated, "stdlib.qwen35.batch.linear");
+                let (wmma, simt) = if scope == "all" { (4, 0) } else { (0, 4) };
+                assert_eq!(
+                    linear
+                        .matches("} stdlib.qwen35.batch.wmma-project [")
+                        .count(),
+                    wmma,
+                    "{scope}"
+                );
+                assert_eq!(
+                    linear.matches("} stdlib.qwen35.batch.project [").count(),
+                    simt,
+                    "{scope}"
+                );
+                for name in ["qwen3.decoder-layer", "qwen35.linear-decoder", "qwen3"] {
+                    assert_eq!(
+                        definition(&generated, name),
+                        definition(&original, name),
+                        "decode/head changed in {scope}: {name}"
+                    );
+                }
+                if config.architecture == ModelArchitecture::Qwen35Moe {
+                    assert_eq!(
+                        definition(&generated, "qwen35.moe.ffn"),
+                        definition(&original, "qwen35.moe.ffn")
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 fn emit_linear_decoder(s: &mut String, c0: &ModelConfig, recurrent: usize, conv: usize) {
