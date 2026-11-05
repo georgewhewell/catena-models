@@ -32,9 +32,10 @@ cargo run -r -- --model unsloth/Qwen3.5-0.8B-GGUF:BF16 \
 On RDNA3 HIP GPUs, `--wmma-prefill` enables experimental tiled attention and
 BF16 matrix-core projections for dense and MoE Qwen3.5/3.6 prefill. Dense models
 also use WMMA gate/up/down FFN projections; MoE models use grouped expert
-projections. The four DeltaNet input projections and token decode retain their
-existing arithmetic. WMMA changes accumulation order and can change logits and
-generated tokens, so SIMT remains the default. Set `CATENA_WMMA_COMPONENTS=safe`
+projections. DeltaNet's QKV, Z, alpha, and beta input projections also use WMMA
+during prefill; token decode and the vocabulary projection retain SIMT arithmetic.
+WMMA changes accumulation order and can change logits and generated tokens,
+so SIMT remains the default. Set `CATENA_WMMA_COMPONENTS=safe`
 with that flag to use the exact tiled attention variant and, for MoE, exact
 experts. Dense FFNs retain SIMT arithmetic in this safe selection.
 See [prefill measurements](PREFILL_BENCHMARKS.md)

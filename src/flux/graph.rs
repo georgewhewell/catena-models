@@ -791,7 +791,7 @@ fn owned_network(source: &str, activation_inputs: usize) -> String {
             }
         }
         // Every memory-producing call in these network blocks has one owned output.
-        if line.contains("} flux.") || line.contains("} qwen3.free-") {
+        if line.contains("} flux.") || line.contains("} stdlib.models.resources.free-") {
             if let Some(start) = line.rfind(" [") {
                 let name = &line[start + 2..];
                 if let Some(end) = name.find('.') {
@@ -855,7 +855,7 @@ fn finish(
             }
             let next = format!("free-{i}-{memory}");
             body += &format!(
-                " ({{{} {}}} qwen3.free-{}-before [{next}.])\n",
+                " ({{{} {}}} stdlib.models.resources.free-{}-before [{next}.])\n",
                 wire(aliases.get(memory).unwrap_or(memory)),
                 wire(&continuation),
                 dtypes[memory]

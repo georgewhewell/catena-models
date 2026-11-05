@@ -87,6 +87,73 @@ fn experimental_wmma_projection_matches_cpu() -> anyhow::Result<()> {
 }
 
 #[test]
+#[ignore = "requires gfx1151 HIP GPU and ROCm compiler"]
+fn deltanet_input_projections_match_emulation_bits() -> anyhow::Result<()> {
+    use catena_models::spec::ModelConfig;
+
+    let mut native = compile_projection()?;
+    let mut emulated = native.clone();
+    // Fix each artifact's launch mode without changing process-wide environment
+    // variables, so parallel GPU tests cannot switch one another's arithmetic.
+    let setting = "getenv(\"CATENA_WMMA_EMULATE\")";
+    anyhow::ensure!(
+        native.source.contains(setting),
+        "missing WMMA launch selector"
+    );
+    native.source = native.source.replace(setting, "\"0\"");
+    emulated.source = emulated.source.replace(setting, "\"1\"");
+    let mut runtime = Runtime::new(GpuDialect::Hip)?;
+    let native = runtime.load(native)?;
+    let emulated = runtime.load(emulated)?;
+    for config in [ModelConfig::qwen35_0_8b(), ModelConfig::qwen36_35b_a3b()] {
+        for (name, cols) in [
+            ("qkv", config.linear_qkv_size().unwrap()),
+            ("z", config.linear_inner_size.unwrap()),
+            ("alpha", config.linear_time_step_rank.unwrap()),
+            ("beta", config.linear_time_step_rank.unwrap()),
+        ] {
+            let inner = config.hidden_size;
+            let salt = if name == "beta" { 11 } else { 3 };
+            let weights: Vec<u16> = (0..cols * inner)
+                .map(|i| f32_to_bf16(((i * 13 + salt) % 97) as f32 / 97. - 0.5))
+                .collect();
+            let weights = runtime.mem_u16(&weights)?;
+            for rows in [2, 17] {
+                let input: Vec<u16> = (0..rows * inner)
+                    .map(|i| f32_to_bf16(((i * 7 + i / inner * 11) % 89) as f32 / 89. - 0.5))
+                    .collect();
+                let mut results = Vec::new();
+                for artifact in [&native, &emulated] {
+                    let [Value::MemOwn(result)] = artifact.exec(
+                        "wmma-project",
+                        [
+                            runtime.mem_u16(&input)?.into(),
+                            weights.as_ref().into(),
+                            (inner as u64).into(),
+                            (cols as u64).into(),
+                        ],
+                    )?
+                    else {
+                        anyhow::bail!("projection returned non-memory output");
+                    };
+                    let words = result.try_to_u16_vec()?;
+                    assert_eq!(words.len(), rows * cols);
+                    assert!(words.iter().all(|&x| bf16_to_f32(x).is_finite()));
+                    results.push(words);
+                }
+                assert_eq!(
+                    results[0],
+                    results[1],
+                    "{} {name}: rows={rows} inner={inner} cols={cols}",
+                    config.model_name.as_deref().unwrap()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires a gfx11 HIP GPU and ROCm compiler"]
 fn dense_gate_matches_bf16_boundaries() -> anyhow::Result<()> {
     let mut runtime = Runtime::new(GpuDialect::Hip)?;

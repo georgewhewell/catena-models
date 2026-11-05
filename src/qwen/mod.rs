@@ -615,7 +615,12 @@ mod tests {
         let end = linear[1..]
             .find("(def program ")
             .map_or(linear.len(), |n| n + 1);
-        assert!(!linear[..end].contains("} stdlib.qwen35.batch.wmma-project ["));
+        assert_eq!(
+            linear[..end]
+                .matches("} stdlib.qwen35.batch.wmma-project [")
+                .count(),
+            4
+        );
         let original = source(&config, InferenceOptions::default())?;
         assert!(!original.contains("stdlib.qwen35.batch.wmma-project"));
         assert!(validate(&ModelConfig::qwen35_0_8b(), enabled).is_ok());
@@ -655,8 +660,13 @@ mod tests {
                 2
             );
         }
-        assert_eq!(linear.matches("} stdlib.qwen35.batch.project [").count(), 4);
-        assert!(!linear.contains("} stdlib.qwen35.batch.wmma-project ["));
+        assert_eq!(
+            linear
+                .matches("} stdlib.qwen35.batch.wmma-project [")
+                .count(),
+            4
+        );
+        assert!(!linear.contains("} stdlib.qwen35.batch.project ["));
         let original = source(&config, InferenceOptions::default())?;
         assert!(!original.contains("wmma.mma-bf16-f32"));
         let safe = qwen35::wmma_stages(&config, "safe")?;
