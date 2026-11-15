@@ -19,10 +19,10 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 mod server;
 
 #[derive(Debug, Parser)]
-#[command(about = "Qwen and LFM3 text and image understanding with native Catena GPU execution")]
+#[command(about = "Qwen and LFM3 generation and decisions with native Catena GPU execution")]
 struct Args {
-    /// Serve text chat through the OpenAI Chat Completions and Responses APIs.
-    #[arg(long, conflicts_with_all = ["prompt", "image", "bench", "generate_entrypoint", "ignore_eos", "max_new_tokens"])]
+    /// Serve Chat Completions/Responses or System One decisions, depending on model.
+    #[arg(long, conflicts_with_all = ["prompt", "image", "bench", "generate_entrypoint", "ignore_eos", "max_new_tokens", "systemone"])]
     serve: bool,
 
     #[command(flatten)]
@@ -40,8 +40,12 @@ struct Args {
     no_wmma_prefill: bool,
 
     /// Text prefix, or user-message text when images are supplied.
-    #[arg(long, required_unless_present_any = ["generate_entrypoint", "bench", "image", "serve"])]
+    #[arg(long, required_unless_present_any = ["generate_entrypoint", "bench", "image", "serve", "systemone"])]
     prompt: Option<String>,
+
+    /// Read a System One JSON request from a file, or - for stdin; print JSON.
+    #[arg(long, value_name = "REQUEST", conflicts_with_all = ["prompt", "image", "bench", "generate_entrypoint", "ignore_eos", "max_new_tokens", "serve"])]
+    systemone: Option<PathBuf>,
 
     /// Write the generated model-specific Hex source under target/, then exit.
     #[arg(long, conflicts_with = "prompt")]
@@ -127,6 +131,36 @@ fn main() -> Result<()> {
     let selected_gguf = checkpoint.primary;
     if args.serve {
         return server::run(args.server, args.model, selected_gguf, options);
+    }
+    if let Some(path) = &args.systemone {
+        let bytes = if path == std::path::Path::new("-") {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            io::stdin().read_to_end(&mut bytes)?;
+            bytes
+        } else {
+            std::fs::read(path)?
+        };
+        let request = catena_models::systemone::Request::parse(serde_json::from_slice(&bytes)?)?;
+        let projector = if request.has_images() {
+            Some(download_mmproj(&args.model)?)
+        } else {
+            None
+        };
+        let runner = catena_models::systemone::Runner::load(
+            &selected_gguf,
+            projector.as_deref(),
+            options,
+            usize::MAX,
+            args.model,
+        )?;
+        println!("{}", runner.run(&request)?);
+        return Ok(());
+    }
+    if catena_models::systemone::Metadata::read(&selected_gguf)?.is_some()
+        && !args.generate_entrypoint
+    {
+        anyhow::bail!("this is a decision model; use --systemone REQUEST.json or --serve");
     }
     if args.generate_entrypoint {
         let config = read_gguf_model_config(&selected_gguf)?;
@@ -522,6 +556,7 @@ mod cli_tests {
     fn serving_and_existing_modes() {
         for args in [
             vec!["app", "--model", "test", "--serve"],
+            vec!["app", "--model", "test", "--systemone", "-"],
             vec!["app", "--model", "test", "--prompt", "hi"],
             vec!["app", "--model", "test", "--bench"],
             vec!["app", "--model", "test", "--generate-entrypoint"],
@@ -529,6 +564,7 @@ mod cli_tests {
             assert!(Args::try_parse_from(args).is_ok());
         }
         for extra in [
+            vec!["--systemone", "request.json"],
             vec!["--prompt", "hi"],
             vec!["--bench"],
             vec!["--generate-entrypoint"],

@@ -127,6 +127,10 @@ preserve image order; `--image-max-pixels` can reduce vision encoding cost.
 The CLI and `PreparedMultimodalPrompt` API use the checkpoint's image chat template.
 See [LFM3 image support](LFM3_VISION.md) for implementation and validation details.
 
+The LFM3-based `LiquidAI/d1-2B-GGUF:BF16` decision model supports `--systemone
+request.json` (or `-` for stdin) and `/v1/systemone` in server mode, including
+still images. See [System One decisions](SYSTEMONE.md) for the API and examples.
+
 To run the focused checkpoint/compiler and GPU checks, set `LFM3_GGUF` to the
 cached BF16 file and run `cargo test -r --test lfm3 -- --ignored --nocapture`.
 

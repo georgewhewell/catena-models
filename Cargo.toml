@@ -6,6 +6,7 @@ default-run = "catena-models"
 
 [dependencies]
 anyhow = "1.0"
+base64 = "0.22"
 catena-lang = { git = "https://github.com/hellas-ai/catena-lang.git", branch = "master", version = "0.1.0" }
 clap = { version = "4.5", features = ["derive", "env"] }
 axum = "0.8"
@@ -14,7 +15,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "signal", "sync", "macros"] }
 tokio-stream = "0.1"
-minijinja = { version = "2", features = ["json", "loop_controls"] }
+minijinja = { version = "2", features = ["json", "loop_controls", "preserve_order"] }
 minijinja-contrib = { version = "2", features = ["pycompat"] }
 hf-hub = { version = "1.0.0", default-features = false, features = ["blocking", "rustls-tls"] }
 libc = "0.2"
@@ -24,7 +25,7 @@ metacat = "0.3.0"
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 safetensors = "0.7"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 jsonschema = { version = "0.33", default-features = false }
 png = "0.18"
 jpeg-decoder = { version = "0.3", default-features = false }

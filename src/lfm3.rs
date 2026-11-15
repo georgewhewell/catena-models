@@ -240,6 +240,9 @@ pub(crate) fn source(cfg: &ModelConfig, options: InferenceOptions) -> Result<Str
             "({[.v4] [.key]} stdlib.models.memory.u64.less [v5.])",
             &format!("({{[.v4] [.key] {}}} stdlib.lfm3.masked [v5.])", c(window)),
         );
+        if window == 0 && !l.causal_attention {
+            a = bidirectional_attention(a);
+        }
         if window > 0 {
             a = bounded_window(a, window, cfg.key_value_size());
         }
@@ -800,6 +803,51 @@ fn emit_convolution(s: &mut String, cfg: &ModelConfig, fast: bool) {
         call(s, &names, "stdlib.lfm3.conv-prefill", "result");
         s.push_str("  [.result]\n ))\n");
     }
+}
+
+/// Full d1 prompts read all real keys, including keys after the query tile.
+fn bidirectional_attention(mut source: String) -> String {
+    let prefix = "stdlib.qwen35.wmma.attention.";
+    for name in ["tile", "tile-exact", "tile-safe"] {
+        let old = definitions(&source, &[&format!("{prefix}{name}:")]);
+        let from = "({[.start] [.v4]} stdlib.models.memory.u64.add [v5.])";
+        assert!(old.contains(from), "missing full attention extent {name}");
+        let new = old.replace(
+            from,
+            "({[.start] [.sequence]} stdlib.models.memory.u64.add [v5.])",
+        );
+        source = source.replace(old.trim(), new.trim());
+    }
+    // Reuse score-write's start argument for the real key count, masking padding only.
+    let old = definitions(&source, &[&format!("{prefix}score-write:")]);
+    let new = old
+        .replace(
+            &format!("({{[.v4] [.key] {}}} stdlib.lfm3.masked [v5.])", c(0)),
+            "({[.key] [.start]} stdlib.models.memory.u64.less [v5.])",
+        )
+        .replace(
+            "({[.v5] (const.u32.0xFF800000 u32.bitcast-f32) [.v2]}",
+            "({[.v5] [.v2] (const.u32.0xFF800000 u32.bitcast-f32)}",
+        );
+    assert_ne!(old, new);
+    source = source.replace(old.trim(), new.trim());
+    source = source.replace("[.keys] [.start] [.first]", "[.keys] [.realkeys] [.first]");
+    // The scalar path must still skip padded keys before reading cache memory.
+    let old = definitions(&source, &[&format!("{prefix}qk-exact-one:")]);
+    let new = old.replace(
+        "({[.v15] [.v0]} stdlib.models.memory.u64.less [v16.])",
+        "({[.v0] [.realkeys]} stdlib.models.memory.u64.less [valid-key.])\n  ({[.valid-key] (const.u64.0x0000000000000000) (const.u64.0x0000000000000001)} stdlib.models.memory.select-u64 [invalid-key.])\n  ({(const.u64.0x0000000000000000) [.invalid-key]} stdlib.models.memory.u64.less [v16.])",
+    );
+    assert_ne!(old, new);
+    source = source.replace(old.trim(), new.trim());
+    // The scalar P*V reducer also has a causal per-query traversal bound.
+    let old = definitions(&source, &[&format!("{prefix}pv-exact-one:")]);
+    let new = old.replace(
+        "({[.v11] [.v12]} stdlib.models.memory.u64.add [v13.])",
+        "({[.realkeys] (const.u64.0x0000000000000000)} stdlib.models.memory.u64.add [v13.])",
+    );
+    assert_ne!(old, new);
+    source.replace(old.trim(), new.trim())
 }
 
 /// Limit sliding attention's key traversal, not just the score mask. Cache

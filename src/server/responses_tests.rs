@@ -542,7 +542,7 @@ async fn responses_share_authentication_body_limits_and_queue() {
     worker.join().unwrap();
     let (tx, rx) = tokio::sync::mpsc::channel::<Job>(1);
     let (out, _) = tokio::sync::mpsc::channel(1);
-    tx.try_send(Job {
+    tx.try_send(Job::Generate {
         request: request(json!({})).prepare("test").unwrap().generation,
         output: out,
     })

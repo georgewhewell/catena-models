@@ -206,6 +206,15 @@ impl QwenTokenizer {
             .with_context(|| format!("tokenizer is missing {token}"))
     }
 
+    pub(crate) fn control_tokens(&self) -> Vec<String> {
+        self.inner
+            .get_added_tokens_decoder()
+            .values()
+            .filter(|t| t.special)
+            .map(|t| t.content.clone())
+            .collect()
+    }
+
     pub fn encode_without_special_tokens(&self, prompt: &str) -> Result<Vec<u64>> {
         let encoded = self
             .inner

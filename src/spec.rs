@@ -21,6 +21,8 @@ pub enum LayerType {
 /// Layer metadata specific to the LFM3 text operator stack.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lfm3Config {
+    /// Full attention is bidirectional for d1; sliding attention stays causal.
+    pub causal_attention: bool,
     pub kv_heads: Vec<usize>,
     pub sliding_layers: Vec<bool>,
     pub sliding_window: usize,

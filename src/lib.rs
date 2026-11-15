@@ -7,6 +7,7 @@ pub mod model;
 mod qwen;
 mod session_graph;
 pub mod spec;
+pub mod systemone;
 pub mod tokenizer;
 pub mod tts;
 pub mod vision;
