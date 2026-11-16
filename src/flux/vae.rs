@@ -22,7 +22,6 @@ impl VaeDecoder {
         debug: bool,
     ) -> Result<Self> {
         let config: VaeConfig = read(snapshot.join("vae/config.json"))?;
-        config.validate()?;
         let mut weights = Weights::open(&snapshot.join("vae/diffusion_pytorch_model.safetensors"))?;
         weights.validate("bn.running_mean", &[128])?;
         weights.validate("bn.running_var", &[128])?;

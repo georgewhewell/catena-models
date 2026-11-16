@@ -55,6 +55,7 @@ pub struct TextEncoder {
     weights: Weights,
     names: Vec<String>,
     debug: bool,
+    hidden_size: usize,
 }
 impl TextEncoder {
     pub fn load(snapshot: &Path, valid: usize) -> Result<Self> {
@@ -106,6 +107,7 @@ impl TextEncoder {
             ops,
             weights,
             names,
+            hidden_size: h,
             debug,
         })
     }
@@ -125,7 +127,13 @@ impl TextEncoder {
             captures: if self.debug {
                 CAPTURES
                     .iter()
-                    .map(|n| (format!("text_{n}"), vec![1, 512, 2560], true))
+                    .map(|n| {
+                        (
+                            format!("text_{n}"),
+                            vec![1, SEQUENCE, self.hidden_size],
+                            true,
+                        )
+                    })
                     .collect()
             } else {
                 vec![]
@@ -133,7 +141,13 @@ impl TextEncoder {
         };
         let result =
             super::graph::execute(&self.ops.artifact, "flux.encode-text", args, &program, dump)?;
-        super::debug::dump(dump, "conditioning", &result, &[1, 512, 7680], true)?;
+        super::debug::dump(
+            dump,
+            "conditioning",
+            &result,
+            &[1, SEQUENCE, self.hidden_size * CAPTURES.len()],
+            true,
+        )?;
         Ok(result)
     }
 }

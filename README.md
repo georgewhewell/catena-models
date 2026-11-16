@@ -206,6 +206,11 @@ cargo run -r --bin flux2-klein -- \
   --prompt 'A red fox sitting in a snowy forest' --output fox.png
 ```
 
+The default model is `black-forest-labs/FLUX.2-klein-4B`. Use
+`--model black-forest-labs/FLUX.2-klein-9B` for the 9B variant. Both single-file
+and sharded transformer checkpoints are supported; model dimensions come from
+`config.json`.
+
 Flux uses native BF16 matrix cores on gfx11 HIP and sm_80+ CUDA GPUs. Set
 `CATENA_GPU_DIALECT=cuda` for CUDA; HIP remains the default. The text encoder and
 transformer use tiled projections and fused attention. The VAE uses tiled
