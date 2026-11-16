@@ -352,6 +352,9 @@ pub(crate) fn read_metadata(path: &Path) -> Result<HashMap<String, serde_json::V
         if key.starts_with("clip.")
             || key.ends_with("rope.dimension_sections")
             || key == "general.architecture"
+            || key == "lfm3.attention.causal"
+            || key.starts_with("lfm3.decision.")
+            || key == "tokenizer.chat_template.systemone"
         {
             out.insert(key, c.json_value(ty)?);
         } else {
@@ -463,6 +466,8 @@ fn parse_gguf_model_config(bytes: &[u8]) -> Result<ModelConfig> {
                 sections[i] = usize::try_from(array[i].as_u64().context("invalid RoPE section")?)?;
             }
             mrope_sections = Some(sections);
+        } else if key == "lfm3.attention.causal" {
+            lfm_arrays.insert(key, cursor.json_value(ty)?);
         } else if key == "lfm3.attention.head_count_kv"
             || key == "lfm3.attention.sliding_window_pattern"
         {
@@ -545,6 +550,11 @@ fn parse_gguf_model_config(bytes: &[u8]) -> Result<ModelConfig> {
             .map(|v| v.as_bool().context("invalid LFM3 sliding flag"))
             .collect::<Result<Vec<_>>>()?;
         Some(crate::spec::Lfm3Config {
+            causal_attention: lfm_arrays
+                .get("lfm3.attention.causal")
+                .map(|v| v.as_bool().context("invalid LFM3 causal flag"))
+                .transpose()?
+                .unwrap_or(true),
             kv_heads: heads,
             sliding_layers,
             sliding_window: u("attention.sliding_window")?,

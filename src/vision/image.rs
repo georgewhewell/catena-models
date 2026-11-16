@@ -1,6 +1,6 @@
 use super::{ImageResize, VisionConfig, VisionKind};
 use anyhow::{Context, Result, bail, ensure};
-use std::{fs::File, io::BufReader, path::Path};
+use std::path::Path;
 
 /// Spatial-merge ordered patches; each row is [RGB channel, patch y, patch x].
 /// Still-image temporal duplication is applied by the two projection slices.
@@ -135,10 +135,13 @@ pub fn smart_resize(
     Ok((rh, rw))
 }
 fn decode(path: &Path) -> Result<(Vec<u8>, usize, usize)> {
-    let mut magic = [0; 8];
-    std::io::Read::read_exact(&mut File::open(path)?, &mut magic)?;
+    decode_bytes(&std::fs::read(path)?)
+}
+
+pub fn decode_bytes(bytes: &[u8]) -> Result<(Vec<u8>, usize, usize)> {
+    let magic = bytes.get(..8).context("truncated image")?;
     if magic.starts_with(&[0xff, 0xd8]) {
-        let mut decoder = jpeg_decoder::Decoder::new(BufReader::new(File::open(path)?));
+        let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(bytes));
         let bytes = decoder.decode()?;
         let info = decoder.info().context("missing JPEG header")?;
         let rgb = match info.pixel_format {
@@ -148,8 +151,8 @@ fn decode(path: &Path) -> Result<(Vec<u8>, usize, usize)> {
         };
         return Ok((rgb, info.width as usize, info.height as usize));
     }
-    ensure!(magic == *b"\x89PNG\r\n\x1a\n", "expected PNG or JPEG image");
-    let mut decoder = png::Decoder::new(BufReader::new(File::open(path)?));
+    ensure!(magic == b"\x89PNG\r\n\x1a\n", "expected PNG or JPEG image");
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info()?;
     let mut bytes = vec![

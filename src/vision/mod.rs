@@ -14,7 +14,7 @@ use catena_lang::{
     codegen::GpuDialect,
     runtime::{Artifact, MemOwn, Runtime, Value},
 };
-use std::{collections::BTreeMap, path::Path, time::Instant};
+use std::{collections::BTreeMap, path::Path, rc::Rc, time::Instant};
 
 pub struct VisionModel {
     runtime: Runtime,
@@ -234,7 +234,7 @@ pub struct PreparedMultimodalPrompt {
     pub(crate) tokens: Vec<u64>,
     pub(crate) positions: Vec<[u64; 3]>,
     pub(crate) spans: Vec<ImageSpan>,
-    pub(crate) images: Vec<ImageEmbedding>,
+    pub(crate) images: Vec<Rc<ImageEmbedding>>,
     pub(crate) next_rope_position: u64,
 }
 impl PreparedMultimodalPrompt {
@@ -300,7 +300,48 @@ impl PreparedMultimodalPrompt {
             tokens,
             positions,
             spans,
-            images,
+            images: images.into_iter().map(Rc::new).collect(),
+            next_rope_position,
+        })
+    }
+
+    /// Expand trusted image markers in an already-rendered decision prompt.
+    pub(crate) fn from_rendered(
+        tokenizer: &QwenTokenizer,
+        rendered: &str,
+        images: &[Rc<ImageEmbedding>],
+    ) -> Result<Self> {
+        let marker = tokenizer.special_token_id("<|image|>")?;
+        let mut tokens = Vec::new();
+        let mut spans = Vec::new();
+        for token in tokenizer.encode_without_special_tokens(rendered)? {
+            if token == marker {
+                let image = images
+                    .get(spans.len())
+                    .context("extra image marker in prompt")?;
+                let len = image.token_count();
+                spans.push(ImageSpan {
+                    start: tokens.len(),
+                    len,
+                });
+                tokens.resize(
+                    tokens
+                        .len()
+                        .checked_add(len)
+                        .context("image prompt overflow")?,
+                    marker,
+                );
+            } else {
+                tokens.push(token);
+            }
+        }
+        ensure!(spans.len() == images.len(), "image marker count mismatch");
+        let next_rope_position = tokens.len() as u64;
+        Ok(Self {
+            positions: (0..tokens.len()).map(|i| [i as u64; 3]).collect(),
+            tokens,
+            spans,
+            images: images.to_vec(),
             next_rope_position,
         })
     }
@@ -380,7 +421,7 @@ impl PreparedMultimodalPrompt {
             tokens,
             positions,
             spans,
-            images,
+            images: images.into_iter().map(Rc::new).collect(),
             next_rope_position,
         })
     }

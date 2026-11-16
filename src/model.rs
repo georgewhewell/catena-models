@@ -176,7 +176,14 @@ impl Model {
         self.weight_byte_len
     }
 
-    /// Run a full causal prefill and return final-position vocabulary logits.
+    pub fn is_decision(&self) -> bool {
+        self.config
+            .lfm3
+            .as_ref()
+            .is_some_and(|l| !l.causal_attention)
+    }
+
+    /// Run a full prefill and return final-position vocabulary logits.
     pub fn logits(&self, tokens: &[u64]) -> Result<Vec<f32>> {
         let mut session = self.session(tokens.len())?;
         session.prefill_logits(tokens)
@@ -422,6 +429,10 @@ pub struct Session<'model> {
 impl Session<'_> {
     /// Freeze this session without copying or retaining a borrow of the model.
     pub fn into_checkpoint(mut self) -> Result<SessionCheckpoint> {
+        ensure!(
+            !self.model.is_decision(),
+            "decision models cannot cache prompt prefixes"
+        );
         Ok(SessionCheckpoint {
             identity: self.model.identity.clone(),
             state: self
@@ -436,6 +447,10 @@ impl Session<'_> {
 
     /// Append a nonempty prefill batch at the current position, including position zero.
     pub fn append_next_token(&mut self, tokens: &[u64]) -> Result<u64> {
+        ensure!(
+            !self.model.is_decision(),
+            "decision models do not generate text"
+        );
         let (_, next) = self.forward(tokens)?;
         Ok(next)
     }
@@ -467,12 +482,20 @@ impl Session<'_> {
     }
 
     pub fn prefill_next_token(&mut self, tokens: &[u64]) -> Result<u64> {
+        ensure!(
+            !self.model.is_decision(),
+            "decision models do not generate text"
+        );
         ensure!(self.position == 0, "a session can only be prefilled once");
         let (_logits, next_token) = self.forward(tokens)?;
         Ok(next_token)
     }
 
     pub fn decode_next_token(&mut self, token: u64) -> Result<u64> {
+        ensure!(
+            !self.model.is_decision(),
+            "decision models do not generate text"
+        );
         ensure!(self.position > 0, "decode requires a completed prefill");
         let (_logits, next_token) = self.forward(std::slice::from_ref(&token))?;
         Ok(next_token)
@@ -490,6 +513,10 @@ impl Session<'_> {
         &mut self,
         prompt: &crate::vision::PreparedMultimodalPrompt,
     ) -> Result<u64> {
+        ensure!(
+            !self.model.is_decision(),
+            "decision models do not generate text"
+        );
         let (_, next) = self.prefill_multimodal(prompt)?;
         Ok(next)
     }
@@ -663,6 +690,10 @@ impl Session<'_> {
     }
 
     fn forward(&mut self, tokens: &[u64]) -> Result<(MemOwn, u64)> {
+        ensure!(
+            !self.model.is_decision() || self.position == 0,
+            "decision models require a fresh complete prompt"
+        );
         ensure!(
             !tokens.is_empty()
                 && self

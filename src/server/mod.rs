@@ -1,4 +1,4 @@
-//! Text-only serving. HTTP schemas and inference are deliberately separate.
+//! Text generation and System One decision serving. HTTP schemas and inference are deliberately separate.
 mod api;
 mod engine;
 mod output;
@@ -61,9 +61,35 @@ pub fn run(
         "API key must not be empty"
     );
     let shutdown = Arc::new(AtomicBool::new(false));
-    eprintln!("loading model and chat template for serving");
+    eprintln!("loading model for serving");
+    let decision = catena_models::systemone::Metadata::read(&path)?.is_some();
+    let projector = if decision {
+        Some(catena_models::hfhub::download_mmproj(&model)?)
+    } else {
+        None
+    };
+    let worker_model = model.clone();
     let worker = engine::start(
-        move || engine::QwenBackend::load(path, options, config.ctx_size, !config.no_prefix_cache),
+        move || {
+            if decision {
+                Ok(engine::ModelBackend::Decision(
+                    catena_models::systemone::Runner::load(
+                        &path,
+                        projector.as_deref(),
+                        options,
+                        config.ctx_size,
+                        worker_model,
+                    )?,
+                ))
+            } else {
+                Ok(engine::ModelBackend::Chat(engine::QwenBackend::load(
+                    path,
+                    options,
+                    config.ctx_size,
+                    !config.no_prefix_cache,
+                )?))
+            }
+        },
         shutdown.clone(),
     )?;
     let state = api::ServerState {
@@ -78,7 +104,10 @@ pub fn run(
         let listener = tokio::net::TcpListener::bind((config.host, config.port))
             .await
             .context("binding HTTP listener")?;
-        eprintln!("Chat server ready at http://{}/v1", listener.local_addr()?);
+        eprintln!(
+            "Inference server ready at http://{}/v1",
+            listener.local_addr()?
+        );
         let signal = shutdown.clone();
         axum::serve(listener, api::router(state))
             .with_graceful_shutdown(async move {

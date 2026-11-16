@@ -228,7 +228,7 @@ async fn queue_saturation_and_worker_unavailability() {
         jobs: tx.clone(),
     });
     let (out, _) = tokio::sync::mpsc::channel(1);
-    tx.try_send(Job {
+    tx.try_send(Job::Generate {
         request: Generation {
             messages: vec![],
             tools: vec![],
@@ -474,4 +474,98 @@ async fn protocol_logs_capture_requests_responses_and_sse_without_credentials() 
     }
     assert!(!logs.contains("credential-not-for-logs"));
     assert!(!logs.contains("authorization"));
+}
+
+#[tokio::test]
+async fn systemone_auth_validation_and_dispatch() {
+    struct Decisions;
+    impl Backend for Decisions {
+        fn generate(&mut self, _: Generation, _: &Sink) -> Result<(), Failure> {
+            Err(Failure::unsupported("use /v1/systemone"))
+        }
+        fn decide(
+            &mut self,
+            request: catena_models::systemone::Request,
+            _: &dyn Fn() -> bool,
+        ) -> Result<Value, Failure> {
+            assert_eq!(request.questions[0].name, "refund");
+            Ok(
+                json!({"model":"test","answers":{"refund":{"type":"noul","noul":0.9}},"usage":{"input_tokens":42,"output_tokens":0}}),
+            )
+        }
+    }
+    let worker = engine::start(|| Ok(Decisions), Arc::new(AtomicBool::new(false))).unwrap();
+    let app = router(ServerState {
+        model: Arc::from("test"),
+        key: Some(Arc::from("secret")),
+        jobs: worker.sender,
+    });
+    let payload = json!({"state":"Please refund this.","questions":{"refund":{"type":"noul","instructions":"Refund?"}}});
+    let request = |value: Value, key: Option<&str>| {
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/v1/systemone")
+            .header("content-type", "application/json");
+        if let Some(key) = key {
+            builder = builder.header("authorization", format!("Bearer {key}"));
+        }
+        builder.body(Body::from(value.to_string())).unwrap()
+    };
+    assert_eq!(
+        app.clone()
+            .oneshot(request(payload.clone(), None))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(request(json!({"state":"x","questions":{}}), Some("secret")))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let response = app
+        .clone()
+        .oneshot(request(payload, Some("secret")))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response: Value = serde_json::from_str(&body(response).await).unwrap();
+    assert_eq!(response["answers"]["refund"]["noul"], 0.9);
+    assert_eq!(response["usage"]["output_tokens"], 0);
+    assert_eq!(
+        app.clone()
+            .oneshot(post(base(), Some("secret")))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::NOT_IMPLEMENTED
+    );
+    drop(app);
+    worker.thread.join().unwrap();
+
+    let worker = engine::start(
+        || {
+            Ok(Fake {
+                calls: Arc::new(AtomicUsize::new(0)),
+            })
+        },
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    let app = router(ServerState {
+        model: Arc::from("test"),
+        key: None,
+        jobs: worker.sender,
+    });
+    let payload =
+        json!({"state":"x","questions":{"refund":{"type":"noul","instructions":"Refund?"}}});
+    assert_eq!(
+        app.oneshot(request(payload, None)).await.unwrap().status(),
+        StatusCode::NOT_IMPLEMENTED
+    );
+    worker.thread.join().unwrap();
 }

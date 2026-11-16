@@ -59,25 +59,41 @@ pub enum Event {
 pub struct Failure {
     pub message: String,
     pub invalid_request: bool,
+    pub unsupported: bool,
 }
 impl Failure {
+    pub fn unsupported(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            invalid_request: false,
+            unsupported: true,
+        }
+    }
     pub fn invalid(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             invalid_request: true,
+            unsupported: false,
         }
     }
     pub fn internal(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             invalid_request: false,
+            unsupported: false,
         }
     }
 }
 
-pub struct Job {
-    pub request: Generation,
-    pub output: mpsc::Sender<Event>,
+pub enum Job {
+    Generate {
+        request: Generation,
+        output: mpsc::Sender<Event>,
+    },
+    Decide {
+        request: catena_models::systemone::Request,
+        output: tokio::sync::oneshot::Sender<Result<Value, Failure>>,
+    },
 }
 pub struct Sink {
     pub output: mpsc::Sender<Event>,
@@ -105,6 +121,13 @@ impl Sink {
 }
 pub trait Backend {
     fn generate(&mut self, request: Generation, sink: &Sink) -> Result<(), Failure>;
+    fn decide(
+        &mut self,
+        _request: catena_models::systemone::Request,
+        _cancelled: &dyn Fn() -> bool,
+    ) -> Result<Value, Failure> {
+        Err(Failure::unsupported("this model is not a decision model"))
+    }
 }
 pub struct Worker {
     pub sender: mpsc::Sender<Job>,
@@ -130,15 +153,26 @@ pub fn start<B: Backend + 'static>(
                 }
             };
             while let Some(job) = receiver.blocking_recv() {
-                let sink = Sink {
-                    output: job.output,
-                    shutdown: shutdown.clone(),
-                };
-                if sink.cancelled() {
-                    continue;
-                }
-                if let Err(error) = backend.generate(job.request, &sink) {
-                    sink.send(Event::Failed(error));
+                match job {
+                    Job::Generate { request, output } => {
+                        let sink = Sink {
+                            output,
+                            shutdown: shutdown.clone(),
+                        };
+                        if !sink.cancelled() {
+                            if let Err(error) = backend.generate(request, &sink) {
+                                sink.send(Event::Failed(error));
+                            }
+                        }
+                    }
+                    Job::Decide { request, output } => {
+                        if !output.is_closed() && !shutdown.load(Ordering::Relaxed) {
+                            let result = backend.decide(request, &|| {
+                                output.is_closed() || shutdown.load(Ordering::Relaxed)
+                            });
+                            let _ = output.send(result);
+                        }
+                    }
                 }
             }
         })?;
@@ -728,5 +762,36 @@ mod prefix_tests {
             );
         }
         Ok(())
+    }
+}
+
+pub enum ModelBackend {
+    Chat(QwenBackend),
+    Decision(catena_models::systemone::Runner),
+}
+impl Backend for ModelBackend {
+    fn generate(&mut self, request: Generation, sink: &Sink) -> Result<(), Failure> {
+        match self {
+            Self::Chat(backend) => backend.generate(request, sink),
+            Self::Decision(_) => Err(Failure::unsupported(
+                "this is a decision model; use /v1/systemone",
+            )),
+        }
+    }
+    fn decide(
+        &mut self,
+        request: catena_models::systemone::Request,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Value, Failure> {
+        match self {
+            Self::Chat(_) => Err(Failure::unsupported("this model is not a decision model")),
+            Self::Decision(runner) => runner.run_cancellable(&request, cancelled).map_err(|e| {
+                if e.is::<catena_models::systemone::InvalidRequest>() {
+                    Failure::invalid(e.to_string())
+                } else {
+                    Failure::internal(e.to_string())
+                }
+            }),
+        }
     }
 }

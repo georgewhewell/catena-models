@@ -38,6 +38,7 @@ pub fn router(state: ServerState) -> Router {
         .route("/health", get(health))
         .route("/v1/models", get(models))
         .route("/v1/chat/completions", post(chat))
+        .route("/v1/systemone", post(systemone))
         .route("/v1/responses", post(super::responses::create))
         .fallback(|| async { error(StatusCode::NOT_FOUND, "not_found", "unknown endpoint") })
         .method_not_allowed_fallback(|| async {
@@ -95,7 +96,13 @@ pub(super) fn error(status: StatusCode, kind: &str, message: &str) -> Response {
     (status, Json(error_json(kind, message))).into_response()
 }
 pub(super) fn failure(f: Failure) -> Response {
-    if f.invalid_request {
+    if f.unsupported {
+        error(
+            StatusCode::NOT_IMPLEMENTED,
+            "not_supported_error",
+            &f.message,
+        )
+    } else if f.invalid_request {
         error(StatusCode::BAD_REQUEST, "invalid_request_error", &f.message)
     } else {
         error(
@@ -388,7 +395,7 @@ pub(super) async fn enqueue(
     generation: Generation,
 ) -> Result<mpsc::Receiver<Event>, Box<Response>> {
     let (tx, mut rx) = mpsc::channel(32);
-    match state.jobs.try_send(Job {
+    match state.jobs.try_send(Job::Generate {
         request: generation,
         output: tx,
     }) {
@@ -588,7 +595,9 @@ impl tokio_stream::Stream for ChatStream {
                 this.pending.push_back(
                     SseEvent::default().data(
                         error_json(
-                            if f.invalid_request {
+                            if f.unsupported {
+                                "not_supported_error"
+                            } else if f.invalid_request {
                                 "invalid_request_error"
                             } else {
                                 "server_error"
@@ -668,5 +677,73 @@ mod tests {
             ])
             .is_err()
         );
+    }
+}
+
+async fn systemone(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Response {
+    if let Err(status) = authorize(&state, &headers) {
+        return error(
+            status,
+            "authentication_error",
+            "invalid or missing bearer token",
+        );
+    }
+    let body = match body {
+        Ok(Json(body)) => body,
+        Err(e) => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                &e.to_string(),
+            );
+        }
+    };
+    if body.get("model").is_some_and(|m| m != &*state.model) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "unknown model",
+        );
+    }
+    let request = match catena_models::systemone::Request::parse(body) {
+        Ok(request) => request,
+        Err(e) => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                &e.to_string(),
+            );
+        }
+    };
+    let (output, rx) = tokio::sync::oneshot::channel();
+    match state.jobs.try_send(Job::Decide { request, output }) {
+        Ok(()) => {}
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            return error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limit_error",
+                "inference queue is full",
+            );
+        }
+        Err(_) => {
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "server_error",
+                "inference worker is unavailable",
+            );
+        }
+    }
+    match rx.await {
+        Ok(Ok(response)) => Json(response).into_response(),
+        Ok(Err(e)) => failure(e),
+        Err(_) => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "server_error",
+            "inference worker is unavailable",
+        ),
     }
 }
