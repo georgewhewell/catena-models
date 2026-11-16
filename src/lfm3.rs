@@ -223,6 +223,9 @@ pub(crate) fn source(cfg: &ModelConfig, options: InferenceOptions) -> Result<Str
     s.push_str(include_str!("catena/session_copy.hex"));
     s.push_str(include_str!("catena/fused_argmax.hex"));
     s.push_str(include_str!("catena/lfm3.hex"));
+    if !l.causal_attention && options.wmma_prefill {
+        s.push_str(include_str!("catena/lfm3_online_attention.hex"));
+    }
     let attn = include_str!("catena/qwen35_wmma_attention.hex");
     for (name, window) in [("full", 0), ("slide", l.sliding_window)] {
         let mut a = format!(
@@ -340,8 +343,13 @@ pub(crate) fn source(cfg: &ModelConfig, options: InferenceOptions) -> Result<Str
         &format!("{{{OWN} {OWN}}}"),
     );
     let mut e = Emit { s: &mut s, next: 0 };
+    let workspace_layers = if l.causal_attention {
+        attention_count
+    } else {
+        1
+    };
     let count = e.op(
-        &["capacity", &c(attention_count * 2 * cfg.key_value_size())],
+        &["capacity", &c(workspace_layers * 2 * cfg.key_value_size())],
         "stdlib.models.memory.u64.mul",
     );
     let cache = e.op(&[&count], "stdlib.qwen3.state-zero-bf16");
@@ -421,7 +429,14 @@ pub(crate) fn source(cfg: &ModelConfig, options: InferenceOptions) -> Result<Str
                 "lfm3.qkvg",
             );
             let base = e.op(
-                &["capacity", &c(ai * 2 * cfg.key_value_size())],
+                &[
+                    "capacity",
+                    &c(if l.causal_attention {
+                        ai * 2 * cfg.key_value_size()
+                    } else {
+                        0
+                    }),
+                ],
                 "stdlib.models.memory.u64.mul",
             );
             let stride = e.op(
@@ -477,13 +492,27 @@ pub(crate) fn source(cfg: &ModelConfig, options: InferenceOptions) -> Result<Str
             e.free(&context, &out, "bf16")
         };
         let operator = e.free(&input, &operator, "bf16");
+        let final_row = !l.causal_attention && layer + 1 == cfg.num_layers;
+        let (operator, layer_rows) = if final_row {
+            let last = e.op(&[&rows, &c(1)], "stdlib.models.memory.u64.sub");
+            let selected = e.op(&[&operator, &last], "stdlib.qwen35.prefill.row");
+            let selected = e.free(&operator, &selected, "bf16");
+            let residual = e.op(&[&hidden, &last], "stdlib.qwen35.prefill.row");
+            hidden = e.free(&hidden, &residual, "bf16");
+            (selected, c(1))
+        } else {
+            (operator, rows.clone())
+        };
         let (residual, ffn) = e.normres(
             &operator,
             &hidden,
             &w("post_attention_norm"),
             &w("ffn_norm"),
         );
-        let gated = e.op(&[&ffn, &w("ffn_gate"), &w("ffn_up"), &rows], "lfm3.gate");
+        let gated = e.op(
+            &[&ffn, &w("ffn_gate"), &w("ffn_up"), &layer_rows],
+            "lfm3.gate",
+        );
         let gated = e.free(&ffn, &gated, "bf16");
         let down = e.project(
             &gated,
@@ -499,7 +528,11 @@ pub(crate) fn source(cfg: &ModelConfig, options: InferenceOptions) -> Result<Str
         };
         (hidden, prepared) = e.normres(&down, &residual, &w("post_ffw_norm"), &next_weight);
     }
-    let last = e.op(&[&rows, &c(1)], "stdlib.models.memory.u64.sub");
+    let last = if l.causal_attention {
+        e.op(&[&rows, &c(1)], "stdlib.models.memory.u64.sub")
+    } else {
+        c(0)
+    };
     let norm = e.op(&[&prepared, &last], "stdlib.qwen35.prefill.row");
     let norm = e.free(&prepared, &norm, "bf16");
     let norm = e.free(&hidden, &norm, "bf16");
@@ -652,6 +685,7 @@ fn emit_projection(s: &mut String, wmma: bool) {
 }
 
 fn emit_attention_dispatch(s: &mut String, cfg: &ModelConfig, wmma: bool) {
+    let decision = !cfg.lfm3.as_ref().unwrap().causal_attention && wmma;
     let args = [
         ("query", OWN),
         ("cache", OWN),
@@ -662,6 +696,49 @@ fn emit_attention_dispatch(s: &mut String, cfg: &ModelConfig, wmma: bool) {
     ];
     let values = args.iter().map(|(n, _)| *n).collect::<Vec<_>>();
     for kind in ["full", "slide"] {
+        if decision {
+            header(s, &format!("lfm3.attention.{kind}"), &args, OWN);
+            s.push_str("  ([.query] stdlib.models.memory.own-count-bf16 [query-count.])\n");
+            call(
+                s,
+                &["query-count", &c(cfg.query_size())],
+                "stdlib.models.memory.u64.div",
+                "rows",
+            );
+            call(
+                s,
+                &["start", "rows"],
+                "stdlib.models.memory.u64.add",
+                "keys",
+            );
+            call(
+                s,
+                &[
+                    "query",
+                    "cache",
+                    "cache",
+                    "rows",
+                    "keys",
+                    &c(cfg.num_attention_heads),
+                    &c(cfg.num_key_value_heads),
+                    &float((cfg.head_dim as f32).sqrt().recip()),
+                    &c(usize::from(kind == "slide")),
+                    &c(if kind == "slide" {
+                        cfg.lfm3.as_ref().unwrap().sliding_window
+                    } else {
+                        0
+                    }),
+                    "gate",
+                    "start",
+                    "keybase",
+                    "valuebase",
+                ],
+                "stdlib.lfm3.online.text.d128.run",
+                "result",
+            );
+            s.push_str("  [.result]\n ))\n");
+            continue;
+        }
         for (branch, proof, target) in [
             ("batch", "((master.predicate prop.IsTrue) |-)", "run"),
             (

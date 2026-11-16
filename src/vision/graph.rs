@@ -15,10 +15,12 @@ struct Op {
     name: String,
     args: Vec<String>,
     out: String,
+    extra: Vec<String>,
 }
 struct Builder {
     ops: Vec<Op>,
     weights: HashMap<String, String>,
+    bf16: bool,
 }
 impl Builder {
     fn op(&mut self, name: &str, args: Vec<String>) -> String {
@@ -27,8 +29,15 @@ impl Builder {
             name: name.into(),
             args,
             out: out.clone(),
+            extra: vec![],
         });
         out
+    }
+    fn op_pair(&mut self, name: &str, args: Vec<String>) -> (String, String) {
+        let first = self.op(name, args);
+        let second = format!("{first}b");
+        self.ops.last_mut().unwrap().extra.push(second.clone());
+        (first, second)
     }
     fn weight(&self, name: &str) -> String {
         w(&self.weights[name])
@@ -41,7 +50,11 @@ impl Builder {
             "__zero"
         });
         self.op(
-            "stdlib.vision.linear-own",
+            if self.bf16 {
+                "stdlib.vision.wmma.linear-bf16-own"
+            } else {
+                "stdlib.vision.wmma.linear-own"
+            },
             vec![
                 w(x),
                 self.weight(&format!("{prefix}.weight")),
@@ -54,7 +67,11 @@ impl Builder {
     }
     fn norm(&mut self, x: &str, prefix: &str, rows: &str, cols: usize, eps: f32) -> String {
         self.op(
-            "stdlib.vision.norm",
+            if self.bf16 {
+                "stdlib.vision.qwen.norm-bf16"
+            } else {
+                "stdlib.vision.norm"
+            },
             vec![
                 w(x),
                 self.weight(&format!("{prefix}.weight")),
@@ -68,13 +85,24 @@ impl Builder {
             ],
         )
     }
+
     fn add(&mut self, x: &str, y: &str) -> String {
-        self.op("stdlib.vision.add", vec![w(x), w(y), w("hidden-count")])
+        self.op(
+            if self.bf16 {
+                "stdlib.vision.qwen.add"
+            } else {
+                "stdlib.vision.add"
+            },
+            vec![w(x), w(y), w("hidden-count")],
+        )
     }
     fn render(self, result: &str, names: &[String], lfm3: bool) -> String {
         let mut last = BTreeMap::new();
         for (i, op) in self.ops.iter().enumerate() {
             last.insert(op.out.clone(), i);
+            for output in &op.extra {
+                last.insert(output.clone(), i);
+            }
             for arg in &op.args {
                 if let Some(name) = arg.strip_prefix("[.").and_then(|s| s.strip_suffix(']'))
                     && last.contains_key(name)
@@ -97,10 +125,25 @@ impl Builder {
                     }
                 })
                 .collect();
-            body += &format!(" ({{{}}} {} [{}.])\n", args.join(" "), op.name, op.out);
+            if op.extra.is_empty() {
+                body += &format!(" ({{{}}} {} [{}.])\n", args.join(" "), op.name, op.out);
+            } else {
+                body += &format!(" ({{{}}} {} [pair-{i}-0.])\n", args.join(" "), op.name);
+                let outputs = std::iter::once(&op.out)
+                    .chain(op.extra.iter())
+                    .collect::<Vec<_>>();
+                for j in 0..outputs.len() - 1 {
+                    let tail = if j + 2 == outputs.len() {
+                        outputs[j + 1].clone()
+                    } else {
+                        format!("pair-{i}-{}", j + 1)
+                    };
+                    body += &format!(" ([.pair-{i}-{j}] *.elim [{} {tail}.])\n", outputs[j]);
+                }
+            }
             let mut continuation = op.out.clone();
             for (name, &end) in &last {
-                if end != i || name == &op.out || name == result {
+                if end != i || name == &op.out || op.extra.contains(name) || name == result {
                     continue;
                 }
                 let next = format!("free-{i}-{name}");
@@ -112,6 +155,9 @@ impl Builder {
                 continuation = next;
             }
             aliases.insert(op.out.clone(), continuation);
+            for output in &op.extra {
+                aliases.insert(output.clone(), output.clone());
+            }
         }
         body += &w(aliases.get(result).map(String::as_str).unwrap_or(result));
         let mut types = vec!["((cap.ref mem) val)"; 5];
@@ -133,7 +179,19 @@ pub(crate) fn source(config: &VisionConfig, names: &[String]) -> String {
         return lfm3_source(config, names);
     }
     let h = config.hidden_size;
+    let dim = h / config.heads;
+    assert!(
+        matches!(dim, 64 | 72),
+        "unsupported Qwen vision head width {dim}"
+    );
+    assert!(
+        h.is_multiple_of(32)
+            && config.intermediate_size.is_multiple_of(2)
+            && config.output_size.is_multiple_of(32)
+            && (3 * config.patch_size * config.patch_size).is_multiple_of(32)
+    );
     let mut b = Builder {
+        bf16: config.kind == VisionKind::Qwen35,
         ops: vec![],
         weights: names
             .iter()
@@ -151,8 +209,8 @@ pub(crate) fn source(config: &VisionConfig, names: &[String]) -> String {
     );
     let ci = 3 * config.patch_size * config.patch_size;
     // Both temporal slices see the same patch for a still image; add the bias once.
-    let p0 = b.op(
-        "stdlib.vision.linear-ref",
+    let patches = b.op(
+        "stdlib.vision.wmma.m64n64k32.patch-bf16.linear-rr.native",
         vec![
             w("patches"),
             b.weight("v.patch_embd.weight"),
@@ -160,21 +218,9 @@ pub(crate) fn source(config: &VisionConfig, names: &[String]) -> String {
             w("rows"),
             c(ci),
             c(h),
-        ],
-    );
-    // Zero bias supplied as an external prepared weight.
-    let p1 = b.op(
-        "stdlib.vision.linear-ref",
-        vec![
-            w("patches"),
             b.weight("v.patch_embd.weight.1"),
-            b.weight("__zero"),
-            w("rows"),
-            c(ci),
-            c(h),
         ],
     );
-    let patches = b.add(&p0, &p1);
     let pos = b.op(
         "stdlib.vision.position",
         vec![
@@ -186,47 +232,33 @@ pub(crate) fn source(config: &VisionConfig, names: &[String]) -> String {
         ],
     );
     let mut x = b.add(&patches, &pos);
+    let mut prepared = None;
     for l in 0..config.layers {
         let prefix = format!("v.blk.{l}");
-        let n = b.norm(&x, &format!("{prefix}.ln1"), "rows", h, config.eps);
+        let n = prepared
+            .take()
+            .unwrap_or_else(|| b.norm(&x, &format!("{prefix}.ln1"), "rows", h, config.eps));
         let qkv = b.linear(&n, &format!("{prefix}.attn_qkv"), "rows", h, 3 * h);
         let q = b.op(
-            "stdlib.vision.slice",
-            vec![w(&qkv), w("hidden-count"), c(3 * h), c(h), c(0)],
+            if dim == 64 {
+                "stdlib.vision.qwen.qkv"
+            } else {
+                "stdlib.vision.qwen.qkv-d72"
+            },
+            vec![
+                w(&qkv),
+                w("positions"),
+                w("frequencies"),
+                w("hidden-count"),
+                c(h),
+            ],
         );
-        let k = b.op(
-            "stdlib.vision.slice",
-            vec![w(&qkv), w("hidden-count"), c(3 * h), c(h), c(h)],
-        );
-        let v = b.op(
-            "stdlib.vision.slice",
-            vec![w(&qkv), w("hidden-count"), c(3 * h), c(h), c(2 * h)],
-        );
+        let k = format!("{q}b");
+        let v = format!("{q}c");
+        b.ops.last_mut().unwrap().extra = vec![k.clone(), v.clone()];
         let dim = h / config.heads;
-        let q = b.op(
-            "stdlib.vision.rope",
-            vec![
-                w(&q),
-                w("positions"),
-                w("frequencies"),
-                w("hidden-count"),
-                c(h),
-                c(dim),
-            ],
-        );
-        let k = b.op(
-            "stdlib.vision.rope",
-            vec![
-                w(&k),
-                w("positions"),
-                w("frequencies"),
-                w("hidden-count"),
-                c(h),
-                c(dim),
-            ],
-        );
         let a = b.op(
-            "stdlib.vision.attention",
+            &format!("stdlib.vision.online.d{dim}.run"),
             vec![
                 w(&q),
                 w(&k),
@@ -235,23 +267,36 @@ pub(crate) fn source(config: &VisionConfig, names: &[String]) -> String {
                 w("rows"),
                 c(config.heads),
                 c(config.heads),
-                c(dim),
                 f(1. / (dim as f32).sqrt()),
                 c(0),
-                w("rows"),
+                c(0),
             ],
         );
         let a = b.linear(&a, &format!("{prefix}.attn_out"), "rows", h, h);
-        x = b.add(&x, &a);
-        let n = b.norm(&x, &format!("{prefix}.ln2"), "rows", h, config.eps);
-        let up = b.linear(
-            &n,
-            &format!("{prefix}.ffn_up"),
-            "rows",
-            h,
-            config.intermediate_size,
+        let (residual, n) = b.op_pair(
+            "stdlib.vision.qwen.add-ln",
+            vec![
+                w(&x),
+                w(&a),
+                b.weight(&format!("{prefix}.ln2.weight")),
+                b.weight(&format!("{prefix}.ln2.bias")),
+                w("rows"),
+                c(h),
+                f(config.eps),
+            ],
         );
-        let up = b.op("stdlib.vision.gelu-tanh", vec![w(&up), w("ff-count")]);
+        x = residual;
+        let up = b.op(
+            "stdlib.vision.wmma.m64n64k32.gelu-tanh-bf16.linear-or.native",
+            vec![
+                w(&n),
+                b.weight(&format!("{prefix}.ffn_up.weight")),
+                b.weight(&format!("{prefix}.ffn_up.bias")),
+                w("rows"),
+                c(h),
+                c(config.intermediate_size),
+            ],
+        );
         let down = b.linear(
             &up,
             &format!("{prefix}.ffn_down"),
@@ -259,13 +304,40 @@ pub(crate) fn source(config: &VisionConfig, names: &[String]) -> String {
             config.intermediate_size,
             h,
         );
-        x = b.add(&x, &down);
+        if l + 1 < config.layers {
+            let next = format!("v.blk.{}.ln1", l + 1);
+            let (residual, n) = b.op_pair(
+                "stdlib.vision.qwen.add-ln",
+                vec![
+                    w(&x),
+                    w(&down),
+                    b.weight(&format!("{next}.weight")),
+                    b.weight(&format!("{next}.bias")),
+                    w("rows"),
+                    c(h),
+                    f(config.eps),
+                ],
+            );
+            x = residual;
+            prepared = Some(n);
+        } else {
+            x = b.add(&x, &down);
+        }
     }
     // LayerNorm is applied before reshaping neighbouring patches into merged rows.
     x = b.norm(&x, "v.post_ln", "rows", h, 1e-6);
     let merged = h * config.merge_size * config.merge_size;
-    x = b.linear(&x, "mm.0", "merged-rows", merged, merged);
-    x = b.op("stdlib.vision.gelu-erf", vec![w(&x), w("hidden-count")]);
+    x = b.op(
+        "stdlib.vision.wmma.m64n64k32.gelu-bf16.linear-or.native",
+        vec![
+            w(&x),
+            b.weight("mm.0.weight"),
+            b.weight("mm.0.bias"),
+            w("merged-rows"),
+            c(merged),
+            c(merged),
+        ],
+    );
     x = b.linear(&x, "mm.2", "merged-rows", merged, config.output_size);
     let source = b.render(&x, names, false);
     let marker = format!(
@@ -283,7 +355,17 @@ fn lfm3_source(config: &VisionConfig, names: &[String]) -> String {
     let h = config.hidden_size;
     let d = h / config.heads;
     let k = d * config.kv_heads;
+    // Preconditions of the generated matrix-core and fused head/row kernels.
+    assert_eq!(d, 64, "LFM3 vision requires 64-channel accelerated heads");
+    assert!(
+        h.is_multiple_of(256)
+            && config.intermediate_size.is_multiple_of(32)
+            && config.output_size.is_multiple_of(32)
+            && (3 * config.patch_size * config.patch_size).is_multiple_of(32),
+        "unsupported LFM3 matrix-core dimensions"
+    );
     let mut b = Builder {
+        bf16: config.kind == VisionKind::Qwen35,
         ops: vec![],
         weights: names
             .iter()
@@ -301,8 +383,8 @@ fn lfm3_source(config: &VisionConfig, names: &[String]) -> String {
         c(config.kv_heads)
     );
     let ci = 3 * config.patch_size * config.patch_size;
-    let p0 = b.op(
-        "stdlib.vision.linear-ref",
+    let patches = b.op(
+        "stdlib.vision.wmma.m64n64k32.patch.linear-rr.native",
         vec![
             w("patches"),
             b.weight("v.patch_embd.weight"),
@@ -310,20 +392,9 @@ fn lfm3_source(config: &VisionConfig, names: &[String]) -> String {
             w("rows"),
             c(ci),
             c(h),
-        ],
-    );
-    let p1 = b.op(
-        "stdlib.vision.linear-ref",
-        vec![
-            w("patches"),
             b.weight("v.patch_embd.weight.1"),
-            b.weight("__zero"),
-            w("rows"),
-            c(ci),
-            c(h),
         ],
     );
-    let patches = b.add(&p0, &p1);
     let mut x = b.op(
         "stdlib.lfm3.vision.rms",
         vec![
@@ -334,18 +405,21 @@ fn lfm3_source(config: &VisionConfig, names: &[String]) -> String {
             f(config.eps),
         ],
     );
+    let mut prepared = None;
     for i in 0..config.layers {
         let prefix = format!("v.blk.{i}");
-        let n = b.op(
-            "stdlib.lfm3.vision.rms",
-            vec![
-                w(&x),
-                b.weight(&format!("{prefix}.ln1.weight")),
-                w("rows"),
-                c(h),
-                f(config.eps),
-            ],
-        );
+        let n = prepared.take().unwrap_or_else(|| {
+            b.op(
+                "stdlib.lfm3.vision.rms",
+                vec![
+                    w(&x),
+                    b.weight(&format!("{prefix}.ln1.weight")),
+                    w("rows"),
+                    c(h),
+                    f(config.eps),
+                ],
+            )
+        });
         let operator = if config.conv_layers.contains(&i) {
             let proj = b.linear(&n, &format!("{prefix}.conv2d_in_proj"), "rows", h, 3 * h);
             let spatial = b.op(
@@ -364,63 +438,33 @@ fn lfm3_source(config: &VisionConfig, names: &[String]) -> String {
             let key = b.linear(&n, &format!("{prefix}.attn_k"), "rows", h, k);
             let v = b.linear(&n, &format!("{prefix}.attn_v"), "rows", h, k);
             let q = b.op(
-                "stdlib.lfm3.vision.rms",
+                "stdlib.lfm3.vision.rms-rope",
                 vec![
                     w(&q),
                     b.weight(&format!("{prefix}.attn_q_norm.weight")),
+                    w("positions"),
+                    w("frequencies"),
                     w("head-rows"),
+                    c(config.heads),
                     c(d),
                     f(config.eps),
                 ],
             );
             let key = b.op(
-                "stdlib.lfm3.vision.rms",
+                "stdlib.lfm3.vision.rms-rope",
                 vec![
                     w(&key),
                     b.weight(&format!("{prefix}.attn_k_norm.weight")),
+                    w("positions"),
+                    w("frequencies"),
                     w("key-head-rows"),
+                    c(config.kv_heads),
                     c(d),
                     f(config.eps),
                 ],
             );
-            let q = b.op(
-                "stdlib.vision.rope",
-                vec![
-                    w(&q),
-                    w("positions"),
-                    w("frequencies"),
-                    w("hidden-count"),
-                    c(h),
-                    c(d),
-                ],
-            );
-            let key = b.op(
-                "stdlib.vision.rope",
-                vec![
-                    w(&key),
-                    w("positions"),
-                    w("frequencies"),
-                    format!("({{{} {}}} stdlib.models.memory.u64.mul)", w("rows"), c(k)),
-                    c(k),
-                    c(d),
-                ],
-            );
-            let key = b.op(
-                "stdlib.lfm3.vision.repeat-kv",
-                vec![
-                    w(&key),
-                    w("rows"),
-                    c(config.heads),
-                    c(config.kv_heads),
-                    c(d),
-                ],
-            );
-            let v = b.op(
-                "stdlib.lfm3.vision.repeat-kv",
-                vec![w(&v), w("rows"), c(config.heads), c(config.kv_heads), c(d)],
-            );
             let a = b.op(
-                "stdlib.vision.attention",
+                "stdlib.vision.online.d64.run",
                 vec![
                     w(&q),
                     w(&key),
@@ -428,41 +472,39 @@ fn lfm3_source(config: &VisionConfig, names: &[String]) -> String {
                     w("rows"),
                     w("rows"),
                     c(config.heads),
-                    c(config.heads),
-                    c(d),
+                    c(config.kv_heads),
                     f(1. / (d as f32).sqrt()),
                     c(0),
-                    w("rows"),
+                    c(0),
                 ],
             );
             b.linear(&a, &format!("{prefix}.attn_out"), "rows", h, h)
         };
-        x = b.add(&x, &operator);
-        let n = b.op(
-            "stdlib.lfm3.vision.rms",
+        let (residual, n) = b.op_pair(
+            "stdlib.lfm3.vision.add-rms",
             vec![
                 w(&x),
+                w(&operator),
                 b.weight(&format!("{prefix}.ln2.weight")),
                 w("rows"),
                 c(h),
                 f(config.eps),
             ],
         );
-        let gate = b.linear(
-            &n,
-            &format!("{prefix}.ffn_gate"),
-            "rows",
-            h,
-            config.intermediate_size,
+        x = residual;
+        let gated = b.op(
+            "stdlib.vision.wmma.m64n64k32.gate.linear-or.native",
+            vec![
+                w(&n),
+                b.weight(&format!("{prefix}.ffn_gate.weight")),
+                b.weight("__zero"),
+                w("rows"),
+                c(h),
+                c(config.intermediate_size),
+                b.weight(&format!("{prefix}.ffn_up.weight")),
+                b.weight("__zero"),
+            ],
         );
-        let up = b.linear(
-            &n,
-            &format!("{prefix}.ffn_up"),
-            "rows",
-            h,
-            config.intermediate_size,
-        );
-        let gated = b.op("stdlib.lfm3.vision.swiglu", vec![w(&gate), w(&up)]);
         let down = b.linear(
             &gated,
             &format!("{prefix}.ffn_down"),
@@ -470,15 +512,40 @@ fn lfm3_source(config: &VisionConfig, names: &[String]) -> String {
             config.intermediate_size,
             h,
         );
-        x = b.add(&x, &down);
+        if i + 1 < config.layers {
+            let (residual, next) = b.op_pair(
+                "stdlib.lfm3.vision.add-rms",
+                vec![
+                    w(&x),
+                    w(&down),
+                    b.weight(&format!("v.blk.{}.ln1.weight", i + 1)),
+                    w("rows"),
+                    c(h),
+                    f(config.eps),
+                ],
+            );
+            x = residual;
+            prepared = Some(next);
+        } else {
+            x = b.add(&x, &down);
+        }
     }
     x = b.norm(&x, "mm.input_norm", "rows", h, 1e-6);
     x = b.op(
         "stdlib.lfm3.vision.merge",
         vec![w(&x), w("rows"), c(h), w("width")],
     );
-    x = b.linear(&x, "mm.0", "merged-rows", 4 * h, 4 * h);
-    x = b.op("stdlib.vision.gelu-erf", vec![w(&x), w("hidden-count")]);
+    x = b.op(
+        "stdlib.vision.wmma.m64n64k32.gelu.linear-or.native",
+        vec![
+            w(&x),
+            b.weight("mm.0.weight"),
+            b.weight("mm.0.bias"),
+            w("merged-rows"),
+            c(4 * h),
+            c(4 * h),
+        ],
+    );
     x = b.linear(&x, "mm.2", "merged-rows", 4 * h, config.output_size);
     let source = b.render(&x, names, true);
     let marker = format!(
@@ -490,4 +557,54 @@ fn lfm3_source(config: &VisionConfig, names: &[String]) -> String {
     );
     prelude.insert_str(0, &marker);
     source.replacen(&marker, &prelude, 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn large_qwen_projector_composes_without_tile_alignment_panics() {
+        // Cached 35B-A3B projector: D72, a partial LayerNorm block and a K16 tail.
+        let config = VisionConfig {
+            kind: VisionKind::Qwen35,
+            resize: crate::vision::ImageResize::PillowBicubic,
+            kv_heads: 16,
+            conv_layers: vec![],
+            rope_theta: 10000.,
+            hidden_size: 1152,
+            intermediate_size: 4304,
+            output_size: 2048,
+            layers: 27,
+            heads: 16,
+            patch_size: 16,
+            merge_size: 2,
+            position_side: 48,
+            eps: 1e-6,
+            min_pixels: 65536,
+            max_pixels: 16777216,
+            mean: [0.5; 3],
+            std: [0.5; 3],
+        };
+        let mut names = vec!["v.patch_embd.weight.1".into(), "__zero".into()];
+        for prefix in [
+            "v.patch_embd",
+            "v.position_embd",
+            "v.post_ln",
+            "mm.0",
+            "mm.2",
+        ] {
+            for suffix in ["weight", "bias"] {
+                names.push(format!("{prefix}.{suffix}"));
+            }
+        }
+        for layer in 0..config.layers {
+            for prefix in ["ln1", "ln2", "attn_qkv", "attn_out", "ffn_up", "ffn_down"] {
+                for suffix in ["weight", "bias"] {
+                    names.push(format!("v.blk.{layer}.{prefix}.{suffix}"));
+                }
+            }
+        }
+        assert!(!source(&config, &names).is_empty());
+    }
 }

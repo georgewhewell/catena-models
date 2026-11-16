@@ -18,9 +18,9 @@ existing image path. Image input is available through the CLI and the library's
 
 Set `CATENA_GPU_DIALECT=cuda` to use CUDA for both the vision encoder/projector
 and the language model (sm_80+). The language path shares the portable LFM3 text
-kernels, including accelerated image-prompt prefill. The vision encoder keeps
-its existing F32 kernels, which already support both dialects; preprocessing and
-image token insertion are unchanged. HIP remains the default. CUDA execution
+kernels, including accelerated image-prompt prefill. The vision encoder uses BF16
+matrix-core projections and online attention on both dialects, with F32 accumulators, softmax and norms; preprocessing and image
+token insertion are unchanged. HIP remains the default. CUDA execution
 and performance remain unverified on hardware.
 
 The complete vision and image-input language graphs can be compiled without a
@@ -72,9 +72,10 @@ maximum is capped at 4096 output image tokens, matching the GGUF reference runti
 
 Despite its BF16 name, the published projector stores both patchifier slices in
 F16. They are widened exactly once during load. BF16 matrices are widened once on
-the GPU; native F32 tensors remain mapped. The vision graph uses existing F32
-matrix kernels, so vision encoding is a future performance-tuning opportunity.
-The language decoder retains its existing BF16/WMMA paths.
+the GPU; native F32 tensors remain mapped. The vision graph retains F32 buffer
+interfaces but stages matrix operands as BF16 for native WMMA/MMA; normalization, softmax and appropriate reductions remain
+F32. See [Hex performance](LFM3_HEX_PERFORMANCE.md) for current kernels, timings
+and numerical validation. The language decoder retains its existing BF16/WMMA paths.
 
 ## Validation
 
@@ -85,7 +86,7 @@ fixtures and half-precision conversion cases. Focused GPU checks:
 cargo test -r --test lfm3_vl -- --ignored --nocapture
 ```
 
-The image encoder was compared with llama.cpp on deterministic 256×256, 320×256,
+Before matrix-core acceleration, the F32 image encoder was compared with llama.cpp on deterministic 256×256, 320×256,
 and resized 257×193 RGB inputs. The reference used the same checkpoint weights
 exactly widened to F32 to match the existing vision compute path. Relative
 embedding RMS differences were 0.018%, 0.021%, and 0.038%; resized pixels matched
@@ -94,11 +95,15 @@ because it also rounds matrix inputs. These are focused numerical checks, not a
 model-quality evaluation.
 
 The integration check recognizes a red image after batched prefill and checkpoint
-resume. The CLI also correctly identified ordered red/blue image inputs. On the
-validation machine, 256×256 vision encoding took about 4.5 seconds per image;
+resume. The CLI also correctly identified ordered red/blue image inputs. Before acceleration,
+256×256 vision encoding took about 4.5 seconds per image;
 the two-image, 154-token language prefill took about 158 ms. Optional `LFM3_VL_REFERENCE` points to the prefix of little-endian F32
 reference buffers named `PREFIX-WxH.f32` and normalized resized RGB buffers named
 `PREFIX-WxH-pixels.f32`. The latter use interleaved RGB order. All hardware checks
 in this pass used HIP/Strix Halo.
 
 Generate the new Hex assets with `python3 tools/generate-lfm3-vision.py`.
+
+Current native BF16 embedding references use a 2.5% relative RMS bound; the
+previous widened-F32 comparison above is historical. The accelerated 256×256
+encoder measures about 34 ms. See [Hex performance](LFM3_HEX_PERFORMANCE.md).

@@ -125,6 +125,234 @@
   [.v2]
  ))
 
+(def program stdlib.lfm3.vision.add-rms.square : {((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val) (u64 val) ({({master.index32 u32} :) ({(f32 val) ({(({master.index32 master.end32} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({(f32 val) (prop.Truth |-)} *) =
+ ([input residual base cols tid pair.]
+  ([.pair] *.elim [index rest.])
+  ([.rest] *.elim [acc proofs.])
+  ([.proofs] *.elim [less truth.])
+  ([.less] unsafe.discard unit.elim)
+  ([.index] :.forget stdlib.models.memory.u32.to-u64 [i.])
+  ({[.i] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.mul [v0.])
+  ({[.tid] [.v0]} stdlib.models.memory.u64.add [v1.])
+  ({[.v1] [.cols]} stdlib.models.memory.u64.less [v2.])
+  ({[.v2] [.v1] (const.u64.0x0000000000000000)} stdlib.models.memory.select-u64 [v3.])
+  ({[.base] [.v3]} stdlib.models.memory.u64.add [v4.])
+  ({[.input] [.v4]} stdlib.models.memory.own-read-f32 [v5.])
+  ({[.residual] [.v4]} stdlib.models.memory.own-read-f32 [v6.])
+  ({[.v5] [.v6]} stdlib.models.memory.f32.add [v7.])
+  ({[.v7] [.v7]} stdlib.models.memory.f32.mul [v8.])
+  ({[.v2] [.v8] (const.u32.0x00000000 u32.bitcast-f32)} stdlib.models.memory.select-f32 [v9.])
+  ({[.acc] [.v9]} stdlib.models.memory.f32.add [v10.])
+  ({[.v10] [.truth]} *.intro)
+ ))
+
+(def program stdlib.lfm3.vision.add-rms.write : {((cap.own mem) val) ((cap.own mem) val) ((cap.ref mem) val) ((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val) (u64 val) (f32 val) ({({master.index32 u32} :) ({((cap.own mem) val) ({(({master.index32 master.end32} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
+ ([input residual weight sum normalized base cols tid inverse pair.]
+  ([.pair] *.elim [index rest.])
+  ([.rest] *.elim [acc proofs.])
+  ([.proofs] *.elim [less truth.])
+  ([.less] unsafe.discard unit.elim)
+  ([.index] :.forget stdlib.models.memory.u32.to-u64 [i.])
+  ({[.i] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.mul [v0.])
+  ({[.tid] [.v0]} stdlib.models.memory.u64.add [v1.])
+  ({[.base] [.v1]} stdlib.models.memory.u64.add [v2.])
+  ({[.input] [.v2]} stdlib.models.memory.own-read-f32 [v3.])
+  ({[.residual] [.v2]} stdlib.models.memory.own-read-f32 [v4.])
+  ({[.v3] [.v4]} stdlib.models.memory.f32.add [v5.])
+  ({[.weight] [.v1]} stdlib.models.memory.ref-read-f32 [v6.])
+  ({[.v5] [.inverse]} stdlib.models.memory.f32.mul [v7.])
+  ({[.v7] [.v6]} stdlib.models.memory.f32.mul [v8.])
+  ({[.sum] [.v2] [.v5]} stdlib.models.memory.write-f32 unit.elim)
+  ({[.normalized] [.v2] [.v8]} stdlib.models.memory.write-f32 unit.elim)
+  ({[.acc] [.truth]} *.intro)
+ ))
+
+(def program stdlib.lfm3.vision.add-rms.launch.kernel : {((cap.own mem) val) ((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (f32 val) ((cap.own mem) val) ((cap.own mem) val) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({({perf.block ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid} stdlib.gpu.geometry.type.Block)} :) (({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid perf.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
+ ([input residual weight rows cols eps sum normalized memory thread.]
+  ([.thread] stdlib.models.coop.indices [ix.])
+  ([.ix] *.elim [block tid.])
+  ({[.block] [.cols]} stdlib.models.memory.u64.mul [v0.])
+  ({[.cols] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [v1.])
+  ({[.input] [.residual] [.v0] [.cols] [.tid]} partial.stdlib.lfm3.vision.add-rms.square.5 [v2.])
+  ({([.v1] stdlib.models.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [v3.])
+  ({[.v3] (const.u32.0x00000000 u32.bitcast-f32) [.v2] core.truth} core.fold.bounded [partial proof-partial.])
+  ([.proof-partial] unsafe.discard unit.elim)
+  ({[.memory] (const.u64.0x0000000000000100) [.thread]} stdlib.models.coop.slot [v4.])
+  ({[.v4] [.tid] [.partial]} stdlib.models.coop.write [v5.])
+  ({[.v5]} stdlib.models.coop.sync [v6.])
+  ({[.v4] [.v6]} meta.perf.after-shared [v7.])
+  ({[.v7] [.tid] (const.u64.0x0000000000000000) (const.u64.0x0000000000000100)} stdlib.models.coop.reduce-add [v8.])
+  ({[.cols]} stdlib.models.memory.fold-count-u32 [v9.])
+  ({[.v9]} stdlib.models.memory.u32.to-f32 [v10.])
+  ({[.v8] [.v10]} stdlib.models.memory.f32.div [v11.])
+  ({[.v11] [.eps]} stdlib.models.memory.f32.add [v12.])
+  ({[.v12]} stdlib.models.math.sqrt [v13.])
+  ({(const.u32.0x3F800000 u32.bitcast-f32) [.v13]} stdlib.models.memory.f32.div [v14.])
+  ({[.input] [.residual] [.weight] [.sum] [.normalized] [.v0] [.cols] [.tid] [.v14]} partial.stdlib.lfm3.vision.add-rms.write.9 [v15.])
+  ({([.v1] stdlib.models.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [v16.])
+  ({[.v16] [.sum] [.v15] core.truth} core.fold.bounded [written proof-written.])
+  ([.proof-written] unsafe.discard unit.elim)
+  (unit.intro)
+ ))
+
+(def program stdlib.lfm3.vision.add-rms.launch.host : {((cap.own mem) val) ((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (f32 val) ((cap.own mem) val) ((cap.own mem) val) ({perf.grid ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({(u64 val) ((cap.own mem) val)} *)} -> ((cap.own mem) val) =
+ ([input residual weight rows cols eps sum normalized grid memory pair.]
+  ([.pair] *.elim [i acc.])
+  ({[.input] [.residual] [.weight] [.rows] [.cols] [.eps] [.sum] [.normalized] [.memory]} partial.stdlib.lfm3.vision.add-rms.launch.kernel.9 [v0.])
+  ({[.grid] ([.memory] :.forget) [.v0]} unsafe.launch_shared unit.elim)
+  [.acc]
+ ))
+
+(def program stdlib.lfm3.vision.add-rms.launch.host.fold : {((cap.own mem) val) ((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (f32 val) ((cap.own mem) val) ((cap.own mem) val) ({perf.grid ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({({master.index32 u32} :) ({((cap.own mem) val) ({(({master.index32 master.end32} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
+ ([input residual weight rows cols eps sum normalized grid memory pair.]
+  ([.pair] *.elim [index rest.])
+  ([.rest] *.elim [acc proofs.])
+  ([.proofs] *.elim [less truth.])
+  ([.less] unsafe.discard unit.elim)
+  ([.index] :.forget stdlib.models.memory.u32.to-u64 [i.])
+  ({[.i] [.acc]} *.intro [v0.])
+  ({[.input] [.residual] [.weight] [.rows] [.cols] [.eps] [.sum] [.normalized] [.grid] [.memory] [.v0]} stdlib.lfm3.vision.add-rms.launch.host [v1.])
+  ({[.v1] [.truth]} *.intro)
+ ))
+
+(def program stdlib.lfm3.vision.add-rms.launch : {((cap.own mem) val) ((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (f32 val) ((cap.own mem) val) ((cap.own mem) val)} -> ((cap.own mem) val) =
+ ([input residual weight rows cols eps sum normalized.]
+  ({[.rows] (const.u64.0x0000000000000000)} stdlib.models.memory.u64.add [blocks.])
+  ({[.blocks] (const.u64.0x0000000000000100)} stdlib.models.coop.grid [v0.])
+  ({(const.u64.0x0000000000000100) (const.u64.0x0000000000000001)} stdlib.models.coop.layout [v1.])
+  ({[.v0] [.v1]} stdlib.models.coop.reserve [v2.])
+  ({[.input] [.residual] [.weight] [.rows] [.cols] [.eps] [.sum] [.normalized] [.v0] [.v2]} partial.stdlib.lfm3.vision.add-rms.launch.host.fold.10 [v3.])
+  ({((const.u64.0x0000000000000001) stdlib.models.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [v4.])
+  ({[.v4] [.sum] [.v3] core.truth} core.fold.bounded [result proof-result.])
+  ([.proof-result] unsafe.discard unit.elim)
+  [.result]
+ ))
+
+(def program stdlib.lfm3.vision.add-rms : {((cap.own mem) val) ((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (f32 val)} -> ({((cap.own mem) val) ((cap.own mem) val)} *) =
+ ([input residual weight rows cols eps.]
+  ({[.rows] [.cols]} stdlib.models.memory.u64.mul [v0.])
+  ({[.v0]} stdlib.models.memory.alloc-f32 [v1.])
+  ({[.v0]} stdlib.models.memory.alloc-f32 [v2.])
+  ({[.input] [.residual] [.weight] [.rows] [.cols] [.eps] [.v1] [.v2]} stdlib.lfm3.vision.add-rms.launch [v3.])
+  ([.v3] meta.master.complete-own [complete phase.])
+  ({[.v2] [.phase]} meta.master.after-own [v4.])
+  ({[.complete] [.v4]} *.intro [v5.])
+  [.v5]
+ ))
+
+(def program stdlib.lfm3.vision.rms-rope.write : {((cap.own mem) val) ((cap.ref mem) val) ((cap.ref mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) (f32 val) (u64 val) (u64 val) (u64 val) (f32 val) ({({master.index32 u32} :) ({((cap.own mem) val) ({(({master.index32 master.end32} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
+ ([input weight positions frequencies rows heads cols eps base block tid inverse pair.]
+  ([.pair] *.elim [index rest.])
+  ([.rest] *.elim [acc proofs.])
+  ([.proofs] *.elim [less truth.])
+  ([.less] unsafe.discard unit.elim)
+  ([.index] :.forget stdlib.models.memory.u32.to-u64 [i.])
+  ({[.cols] (const.u64.0x0000000000000002)} stdlib.models.memory.u64.div [v0.])
+  ({[.cols] (const.u64.0x0000000000000004)} stdlib.models.memory.u64.div [v1.])
+  ({[.tid] [.v0]} stdlib.models.memory.u64.less [v2.])
+  ({[.tid] [.v0]} stdlib.models.memory.u64.add [v3.])
+  ({[.tid] [.v0]} stdlib.models.memory.u64.sub [v4.])
+  ({[.v2] [.v3] [.v4]} stdlib.models.memory.select-u64 [v5.])
+  ({[.tid] [.v0]} stdlib.models.memory.u64.rem [v6.])
+  ({[.v6] [.v1]} stdlib.models.memory.u64.div [v7.])
+  ({[.v6] [.v1]} stdlib.models.memory.u64.rem [v8.])
+  ({[.block] [.heads]} stdlib.models.memory.u64.div [v9.])
+  ({[.v9] (const.u64.0x0000000000000002)} stdlib.models.memory.u64.mul [v10.])
+  ({[.v10] [.v7]} stdlib.models.memory.u64.add [v11.])
+  ({[.positions] [.v11]} stdlib.models.memory.ref-read-u64 [v12.])
+  ({[.v12]} stdlib.models.memory.fold-count-u32 [v13.])
+  ({[.v13]} stdlib.models.memory.u32.to-f32 [v14.])
+  ({[.frequencies] [.v8]} stdlib.models.memory.ref-read-f32 [v15.])
+  ({[.v14] [.v15]} stdlib.models.memory.f32.mul [v16.])
+  ([.v16] stdlib.models.math.rope-sincos [sine cosine.])
+  ({[.base] [.tid]} stdlib.models.memory.u64.add [v17.])
+  ({[.input] [.v17]} stdlib.models.memory.own-read-f32 [v18.])
+  ({[.v18] [.inverse]} stdlib.models.memory.f32.mul [v19.])
+  ({[.weight] [.tid]} stdlib.models.memory.ref-read-f32 [v20.])
+  ({[.v19] [.v20]} stdlib.models.memory.f32.mul [v21.])
+  ({[.base] [.v5]} stdlib.models.memory.u64.add [v22.])
+  ({[.input] [.v22]} stdlib.models.memory.own-read-f32 [v23.])
+  ({[.v23] [.inverse]} stdlib.models.memory.f32.mul [v24.])
+  ({[.weight] [.v5]} stdlib.models.memory.ref-read-f32 [v25.])
+  ({[.v24] [.v25]} stdlib.models.memory.f32.mul [v26.])
+  ({[.v26]} stdlib.models.memory.f32.negate [v27.])
+  ({[.v2] [.v27] [.v26]} stdlib.models.memory.select-f32 [v28.])
+  ({[.v21] [.cosine]} stdlib.models.memory.f32.mul [v29.])
+  ({[.v28] [.sine]} stdlib.models.memory.f32.mul [v30.])
+  ({[.v29] [.v30]} stdlib.models.memory.f32.add [v31.])
+  ({[.base] [.tid]} stdlib.models.memory.u64.add [v32.])
+  ({[.acc] [.v32] [.v31]} stdlib.models.memory.write-f32 unit.elim)
+  ({[.acc] [.truth]} *.intro)
+ ))
+
+(def program stdlib.lfm3.vision.rms-rope.launch.kernel : {((cap.own mem) val) ((cap.ref mem) val) ((cap.ref mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) (f32 val) ((cap.own mem) val) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({({perf.block ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid} stdlib.gpu.geometry.type.Block)} :) (({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid perf.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
+ ([input weight positions frequencies rows heads cols eps out memory thread.]
+  ([.thread] stdlib.models.coop.indices [ix.])
+  ([.ix] *.elim [block tid.])
+  ({[.block] [.cols]} stdlib.models.memory.u64.mul [v0.])
+  ({[.input] [.v0] [.cols] [.tid]} partial.stdlib.lfm3.vision.rms.square.4 [v1.])
+  ({((const.u64.0x0000000000000001) stdlib.models.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [v2.])
+  ({[.v2] (const.u32.0x00000000 u32.bitcast-f32) [.v1] core.truth} core.fold.bounded [partial proof-partial.])
+  ([.proof-partial] unsafe.discard unit.elim)
+  ({[.memory] (const.u64.0x0000000000000040) [.thread]} stdlib.models.coop.slot [v3.])
+  ({[.v3] [.tid] [.partial]} stdlib.models.coop.write [v4.])
+  ({[.v4]} stdlib.models.coop.sync [v5.])
+  ({[.v3] [.v5]} meta.perf.after-shared [v6.])
+  ({[.v6] [.tid] (const.u64.0x0000000000000000) (const.u64.0x0000000000000040)} stdlib.models.coop.reduce-add [v7.])
+  ({[.cols]} stdlib.models.memory.fold-count-u32 [v8.])
+  ({[.v8]} stdlib.models.memory.u32.to-f32 [v9.])
+  ({[.v7] [.v9]} stdlib.models.memory.f32.div [v10.])
+  ({[.v10] [.eps]} stdlib.models.memory.f32.add [v11.])
+  ({[.v11]} stdlib.models.math.sqrt [v12.])
+  ({(const.u32.0x3F800000 u32.bitcast-f32) [.v12]} stdlib.models.memory.f32.div [v13.])
+  ({[.input] [.weight] [.positions] [.frequencies] [.rows] [.heads] [.cols] [.eps] [.v0] [.block] [.tid] [.v13]} partial.stdlib.lfm3.vision.rms-rope.write.12 [v14.])
+  ({((const.u64.0x0000000000000001) stdlib.models.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [v15.])
+  ({[.v15] [.out] [.v14] core.truth} core.fold.bounded [written proof-written.])
+  ([.proof-written] unsafe.discard unit.elim)
+  (unit.intro)
+ ))
+
+(def program stdlib.lfm3.vision.rms-rope.launch.host : {((cap.own mem) val) ((cap.ref mem) val) ((cap.ref mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) (f32 val) ((cap.own mem) val) ({perf.grid ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({(u64 val) ((cap.own mem) val)} *)} -> ((cap.own mem) val) =
+ ([input weight positions frequencies rows heads cols eps out grid memory pair.]
+  ([.pair] *.elim [i acc.])
+  ({[.input] [.weight] [.positions] [.frequencies] [.rows] [.heads] [.cols] [.eps] [.out] [.memory]} partial.stdlib.lfm3.vision.rms-rope.launch.kernel.10 [v0.])
+  ({[.grid] ([.memory] :.forget) [.v0]} unsafe.launch_shared unit.elim)
+  [.acc]
+ ))
+
+(def program stdlib.lfm3.vision.rms-rope.launch.host.fold : {((cap.own mem) val) ((cap.ref mem) val) ((cap.ref mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) (f32 val) ((cap.own mem) val) ({perf.grid ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({({master.index32 u32} :) ({((cap.own mem) val) ({(({master.index32 master.end32} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
+ ([input weight positions frequencies rows heads cols eps out grid memory pair.]
+  ([.pair] *.elim [index rest.])
+  ([.rest] *.elim [acc proofs.])
+  ([.proofs] *.elim [less truth.])
+  ([.less] unsafe.discard unit.elim)
+  ([.index] :.forget stdlib.models.memory.u32.to-u64 [i.])
+  ({[.i] [.acc]} *.intro [v0.])
+  ({[.input] [.weight] [.positions] [.frequencies] [.rows] [.heads] [.cols] [.eps] [.out] [.grid] [.memory] [.v0]} stdlib.lfm3.vision.rms-rope.launch.host [v1.])
+  ({[.v1] [.truth]} *.intro)
+ ))
+
+(def program stdlib.lfm3.vision.rms-rope.launch : {((cap.own mem) val) ((cap.ref mem) val) ((cap.ref mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) (f32 val) ((cap.own mem) val)} -> ((cap.own mem) val) =
+ ([input weight positions frequencies rows heads cols eps out.]
+  ({[.rows] (const.u64.0x0000000000000000)} stdlib.models.memory.u64.add [blocks.])
+  ({[.blocks] (const.u64.0x0000000000000040)} stdlib.models.coop.grid [v0.])
+  ({(const.u64.0x0000000000000040) (const.u64.0x0000000000000001)} stdlib.models.coop.layout [v1.])
+  ({[.v0] [.v1]} stdlib.models.coop.reserve [v2.])
+  ({[.input] [.weight] [.positions] [.frequencies] [.rows] [.heads] [.cols] [.eps] [.out] [.v0] [.v2]} partial.stdlib.lfm3.vision.rms-rope.launch.host.fold.11 [v3.])
+  ({((const.u64.0x0000000000000001) stdlib.models.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [v4.])
+  ({[.v4] [.out] [.v3] core.truth} core.fold.bounded [result proof-result.])
+  ([.proof-result] unsafe.discard unit.elim)
+  [.result]
+ ))
+
+(def program stdlib.lfm3.vision.rms-rope : {((cap.own mem) val) ((cap.ref mem) val) ((cap.ref mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) (f32 val)} -> ((cap.own mem) val) =
+ ([input weight positions frequencies rows heads cols eps.]
+  ({[.rows] [.cols]} stdlib.models.memory.u64.mul [v0.])
+  ({[.v0]} stdlib.models.memory.alloc-f32 [v1.])
+  ({[.input] [.weight] [.positions] [.frequencies] [.rows] [.heads] [.cols] [.eps] [.v1]} stdlib.lfm3.vision.rms-rope.launch [v2.])
+  [.v2]
+ ))
+
 (def program stdlib.lfm3.vision.swiglu.one : {((cap.own mem) val) ((cap.own mem) val) (u64 val) ({({master.index32 u32} :) ({((cap.own mem) val) ({(({master.index32 master.end32} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
  ([gate up at pair.]
   ([.pair] *.elim [index rest.])
