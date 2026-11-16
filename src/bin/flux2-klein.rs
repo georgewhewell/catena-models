@@ -3,7 +3,7 @@ use catena_models::{flux::config, weights::Weights};
 use clap::Parser;
 use std::path::PathBuf;
 #[derive(Parser)]
-#[command(about = "FLUX.2-klein-4B text-to-image generation (WMMA enabled by default)")]
+#[command(about = "FLUX.2-klein 4B/9B text-to-image generation (WMMA enabled by default)")]
 struct Args {
     #[arg(long)]
     prompt: Option<String>,
@@ -46,9 +46,7 @@ fn main() -> Result<()> {
     let t: config::TextConfig = config::read(p.join("text_encoder/config.json"))?;
     t.qwen()?;
     let d: config::TransformerConfig = config::read(p.join("transformer/config.json"))?;
-    d.validate()?;
     let v: config::VaeConfig = config::read(p.join("vae/config.json"))?;
-    v.validate()?;
     if let Some(dir) = &a.generate_entrypoint {
         let options = catena_models::flux::pipeline::GenerationOptions {
             prompt: String::new(),
@@ -83,7 +81,12 @@ fn main() -> Result<()> {
         ("transformer", "diffusion_pytorch_model.safetensors"),
         ("vae", "diffusion_pytorch_model.safetensors"),
     ] {
-        let w = Weights::open(&p.join(component).join(filename))?;
+        let checkpoint = if component == "transformer" {
+            config::transformer_checkpoint(&p)
+        } else {
+            p.join(component).join(filename)
+        };
+        let w = Weights::open(&checkpoint)?;
         eprintln!(
             "{component}: {} tensors, {:.2} GiB",
             w.tensors.len(),

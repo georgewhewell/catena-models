@@ -830,89 +830,6 @@
  ))
 
 
-(def program stdlib.lfm3.add.element : {((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) (u64 val)} -> 1 =
- ([a b out element.]
-  ({[.a] [.element]} stdlib.models.memory.own-read-bf16 [v0.])
-  ({[.v0]} bf16.to-f32 [v1.])
-  ({[.b] [.element]} stdlib.models.memory.own-read-bf16 [v2.])
-  ({[.v2]} bf16.to-f32 [v3.])
-  ({[.v1] [.v3]} stdlib.models.memory.f32.add [v4.])
-  ({[.v4]} f32.to-bf16 [v5.])
-  ({[.out] [.element] [.v5]} stdlib.models.memory.write-bf16 unit.elim)
-  (unit.intro)
- ))
-
-
-(def program stdlib.lfm3.add.yes : {((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) ({(u64 val) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> 1 =
- ([a b out pair.]
- ([.pair] *.elim [element proofs.])
- ([.proofs] *.elim [proof unit.])
- ([.proof] unsafe.discard unit.elim)
- ([.unit] unit.elim)
- ({[.a] [.b] [.out] [.element]} stdlib.lfm3.add.element)
- ))
-
-
-(def program stdlib.lfm3.add.no : {((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) ({(u64 val) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> 1 =
- ([a b out pair.]
- ([.pair] *.elim [element proofs.])
- ([.proofs] *.elim [proof unit.])
- ([.proof] unsafe.discard unit.elim)
- [.unit]
- ))
-
-
-(def program stdlib.lfm3.add.launch : {((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) (u64 val) ({({master.block ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid} stdlib.gpu.geometry.type.Block)} :) (({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid master.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
- ([a b out work thread.]
- ([.thread] stdlib.models.memory.thread-index [element.])
- ({[.element] [.work]} stdlib.models.memory.u64.less [in-bounds.])
- ({[.in-bounds] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [condition.])
- ({[.a] [.b] [.out]} partial.stdlib.lfm3.add.yes.3 [yes.])
- ({[.a] [.b] [.out]} partial.stdlib.lfm3.add.no.3 [no.])
- ({[.condition] [.element] [.yes] [.no] unit.intro} core.if)
- ))
-
-
-(def program stdlib.lfm3.add.host : {((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) (u64 val) ({master.grid ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({({master.index u64} :) ({((cap.own mem) val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
- ([a b out work grid pair.]
- ([.pair] *.elim [step rest.])
- ([.rest] *.elim [value proofs.])
- ([.proofs] *.elim [less truth.])
- ([.less] unsafe.discard unit.elim)
- ({[.a] [.b] [.out] [.work]} partial.stdlib.lfm3.add.launch.4 [kernel.])
- ({[.grid] [.kernel]} unsafe.launch)
- (unit.elim)
- ({[.value] [.truth]} *.intro)
- ))
-
-
-(def program stdlib.lfm3.add.run : {((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
- ([a b work elements.]
- ([.elements] stdlib.models.memory.alloc-bf16 [out.])
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.a] [.b] [.out] [.work] [.grid]} partial.stdlib.lfm3.add.host.5 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
-
-(def program stdlib.lfm3.add.into : {((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) (u64 val)} -> ((cap.own mem) val) =
- ([a b out work.]
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.a] [.b] [.out] [.work] [.grid]} partial.stdlib.lfm3.add.host.5 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
-
 (def program stdlib.lfm3.swiglu.element : {((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) (u64 val)} -> 1 =
  ([gate up out element.]
   ({[.gate] [.element]} stdlib.models.memory.own-read-bf16 [v0.])
@@ -974,19 +891,6 @@
 (def program stdlib.lfm3.swiglu.run : {((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
  ([gate up work elements.]
  ([.elements] stdlib.models.memory.alloc-bf16 [out.])
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.gate] [.up] [.out] [.work] [.grid]} partial.stdlib.lfm3.swiglu.host.5 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
-
-(def program stdlib.lfm3.swiglu.into : {((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) (u64 val)} -> ((cap.own mem) val) =
- ([gate up out work.]
  ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
  ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
  ({[.blocks]} stdlib.models.memory.grid [grid.])
@@ -1064,19 +968,6 @@
 (def program stdlib.lfm3.bx.run : {((cap.own mem) val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
  ([bcx work elements.]
  ([.elements] stdlib.models.memory.alloc-f32 [out.])
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.bcx] [.out] [.work] [.grid]} partial.stdlib.lfm3.bx.host.4 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
-
-(def program stdlib.lfm3.bx.into : {((cap.own mem) val) ((cap.own mem) val) (u64 val)} -> ((cap.own mem) val) =
- ([bcx out work.]
  ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
  ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
  ({[.blocks]} stdlib.models.memory.grid [grid.])
@@ -1211,19 +1102,6 @@
  ))
 
 
-(def program stdlib.lfm3.conv.into : {((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val)} -> ((cap.own mem) val) =
- ([bx bcx history weight base rows out work.]
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.bx] [.bcx] [.history] [.weight] [.base] [.rows] [.out] [.work] [.grid]} partial.stdlib.lfm3.conv.host.9 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
-
 (def program stdlib.lfm3.tail.element : {((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val)} -> 1 =
  ([bx history base rows out element.]
   ({[.element] (const.u64.0x{{HIDDEN_SIZE}})} stdlib.models.memory.u64.div [v0.])
@@ -1292,19 +1170,6 @@
  ))
 
 
-(def program stdlib.lfm3.tail.into : {((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val)} -> ((cap.own mem) val) =
- ([bx history base rows out work.]
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.bx] [.history] [.base] [.rows] [.out] [.work] [.grid]} partial.stdlib.lfm3.tail.host.7 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
-
 (def program stdlib.lfm3.persist.element : {((cap.own mem) val) (u64 val) ((cap.own mem) val) (u64 val)} -> 1 =
  ([tail base out element.]
   ({[.tail] [.element]} stdlib.models.memory.own-read-f32 [v0.])
@@ -1357,220 +1222,12 @@
  ))
 
 
-(def program stdlib.lfm3.persist.run : {((cap.own mem) val) (u64 val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
- ([tail base work elements.]
- ([.elements] stdlib.models.memory.alloc-f32 [out.])
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.tail] [.base] [.out] [.work] [.grid]} partial.stdlib.lfm3.persist.host.5 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
-
 (def program stdlib.lfm3.persist.into : {((cap.own mem) val) (u64 val) ((cap.own mem) val) (u64 val)} -> ((cap.own mem) val) =
  ([tail base out work.]
  ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
  ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
  ({[.blocks]} stdlib.models.memory.grid [grid.])
  ({[.tail] [.base] [.out] [.work] [.grid]} partial.stdlib.lfm3.persist.host.5 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
-
-(def program stdlib.lfm3.rope.element : {((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val)} -> 1 =
- ([input frequency width start sliding out element.]
-  ({[.element] (const.u64.0x{{HEAD_DIM}})} stdlib.models.memory.u64.rem [v0.])
-  ({(const.u64.0x{{HEAD_DIM}}) (const.u64.0x0000000000000002)} stdlib.models.memory.u64.div [v1.])
-  ({[.v0] [.v1]} stdlib.models.memory.u64.rem [v2.])
-  ({[.v0] [.v1]} stdlib.models.memory.u64.less [v3.])
-  ({[.element] [.v0]} stdlib.models.memory.u64.sub [v4.])
-  ({[.v2] [.v1]} stdlib.models.memory.u64.add [v5.])
-  ({[.v3] [.v5] [.v2]} stdlib.models.memory.select-u64 [v6.])
-  ({[.input] [.element]} stdlib.models.memory.own-read-bf16 [v7.])
-  ({[.v7]} bf16.to-f32 [v8.])
-  ({[.v4] [.v6]} stdlib.models.memory.u64.add [v9.])
-  ({[.input] [.v9]} stdlib.models.memory.own-read-bf16 [v10.])
-  ({[.v10]} bf16.to-f32 [v11.])
-  ({[.element] [.width]} stdlib.models.memory.u64.div [v12.])
-  ({[.start] [.v12]} stdlib.models.memory.u64.add [v13.])
-  ({[.v13]} stdlib.models.memory.fold-count-u32 [v14.])
-  ({[.v14]} stdlib.models.memory.u32.to-f32 [v15.])
-  ({[.frequency] [.v2]} stdlib.models.memory.ref-read-f32 [v16.])
-  ({[.v2]} lfm3.frequency.full [v17.])
-  ({[.v2]} lfm3.frequency.slide [v18.])
-  ({(const.u64.0x0000000000000000) [.sliding]} stdlib.models.memory.u64.less [v19.])
-  ({[.v19] (const.u32.0x3F800000 u32.bitcast-f32) [.v16]} stdlib.models.memory.select-f32 [v20.])
-  ({[.v19] [.v18] [.v17]} stdlib.models.memory.select-f32 [v21.])
-  ({[.v21] [.v20]} stdlib.models.memory.f32.div [v22.])
-  ({[.v15] [.v22]} stdlib.models.memory.f32.mul [v23.])
-  ({[.v23]} stdlib.models.math.rope-sincos [sine cosine.])
-  ({[.v11] [.sine]} stdlib.models.memory.f32.mul [v24.])
-  ({[.v8] [.cosine]} stdlib.models.memory.f32.mul [v25.])
-  ({[.v25] [.v24]} stdlib.models.memory.f32.sub [v26.])
-  ({[.v25] [.v24]} stdlib.models.memory.f32.add [v27.])
-  ({[.v3] [.v26] [.v27]} stdlib.models.memory.select-f32 [v28.])
-  ({[.v28]} f32.to-bf16 [v29.])
-  ({[.out] [.element] [.v29]} stdlib.models.memory.write-bf16 unit.elim)
-  (unit.intro)
- ))
-
-
-(def program stdlib.lfm3.rope.yes : {((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) ({(u64 val) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> 1 =
- ([input frequency width start sliding out pair.]
- ([.pair] *.elim [element proofs.])
- ([.proofs] *.elim [proof unit.])
- ([.proof] unsafe.discard unit.elim)
- ([.unit] unit.elim)
- ({[.input] [.frequency] [.width] [.start] [.sliding] [.out] [.element]} stdlib.lfm3.rope.element)
- ))
-
-
-(def program stdlib.lfm3.rope.no : {((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) ({(u64 val) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> 1 =
- ([input frequency width start sliding out pair.]
- ([.pair] *.elim [element proofs.])
- ([.proofs] *.elim [proof unit.])
- ([.proof] unsafe.discard unit.elim)
- [.unit]
- ))
-
-
-(def program stdlib.lfm3.rope.launch : {((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val) ({({master.block ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid} stdlib.gpu.geometry.type.Block)} :) (({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid master.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
- ([input frequency width start sliding out work thread.]
- ([.thread] stdlib.models.memory.thread-index [element.])
- ({[.element] [.work]} stdlib.models.memory.u64.less [in-bounds.])
- ({[.in-bounds] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [condition.])
- ({[.input] [.frequency] [.width] [.start] [.sliding] [.out]} partial.stdlib.lfm3.rope.yes.6 [yes.])
- ({[.input] [.frequency] [.width] [.start] [.sliding] [.out]} partial.stdlib.lfm3.rope.no.6 [no.])
- ({[.condition] [.element] [.yes] [.no] unit.intro} core.if)
- ))
-
-
-(def program stdlib.lfm3.rope.host : {((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val) ({master.grid ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({({master.index u64} :) ({((cap.own mem) val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
- ([input frequency width start sliding out work grid pair.]
- ([.pair] *.elim [step rest.])
- ([.rest] *.elim [value proofs.])
- ([.proofs] *.elim [less truth.])
- ([.less] unsafe.discard unit.elim)
- ({[.input] [.frequency] [.width] [.start] [.sliding] [.out] [.work]} partial.stdlib.lfm3.rope.launch.7 [kernel.])
- ({[.grid] [.kernel]} unsafe.launch)
- (unit.elim)
- ({[.value] [.truth]} *.intro)
- ))
-
-
-(def program stdlib.lfm3.rope.run : {((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
- ([input frequency width start sliding work elements.]
- ([.elements] stdlib.models.memory.alloc-bf16 [out.])
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.input] [.frequency] [.width] [.start] [.sliding] [.out] [.work] [.grid]} partial.stdlib.lfm3.rope.host.8 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
-
-(def program stdlib.lfm3.rope.into : {((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val)} -> ((cap.own mem) val) =
- ([input frequency width start sliding out work.]
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.input] [.frequency] [.width] [.start] [.sliding] [.out] [.work] [.grid]} partial.stdlib.lfm3.rope.host.8 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
-
-(def program stdlib.lfm3.cache.element : {((cap.own mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val)} -> 1 =
- ([input base width start out element.]
-  ({[.element] [.width]} stdlib.models.memory.u64.div [v0.])
-  ({[.element] [.width]} stdlib.models.memory.u64.rem [v1.])
-  ({[.start] [.v0]} stdlib.models.memory.u64.add [v2.])
-  ({[.v2] [.width]} stdlib.models.memory.u64.mul [v3.])
-  ({[.v3] [.v1]} stdlib.models.memory.u64.add [v4.])
-  ({[.base] [.v4]} stdlib.models.memory.u64.add [v5.])
-  ({[.input] [.element]} stdlib.models.memory.own-read-bf16 [v6.])
-  ({[.v6]} bf16.to-f32 [v7.])
-  ({[.v7]} f32.to-bf16 [v8.])
-  ({[.out] [.v5] [.v8]} stdlib.models.memory.write-bf16 unit.elim)
-  (unit.intro)
- ))
-
-
-(def program stdlib.lfm3.cache.yes : {((cap.own mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) ({(u64 val) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> 1 =
- ([input base width start out pair.]
- ([.pair] *.elim [element proofs.])
- ([.proofs] *.elim [proof unit.])
- ([.proof] unsafe.discard unit.elim)
- ([.unit] unit.elim)
- ({[.input] [.base] [.width] [.start] [.out] [.element]} stdlib.lfm3.cache.element)
- ))
-
-
-(def program stdlib.lfm3.cache.no : {((cap.own mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) ({(u64 val) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> 1 =
- ([input base width start out pair.]
- ([.pair] *.elim [element proofs.])
- ([.proofs] *.elim [proof unit.])
- ([.proof] unsafe.discard unit.elim)
- [.unit]
- ))
-
-
-(def program stdlib.lfm3.cache.launch : {((cap.own mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val) ({({master.block ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid} stdlib.gpu.geometry.type.Block)} :) (({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid master.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
- ([input base width start out work thread.]
- ([.thread] stdlib.models.memory.thread-index [element.])
- ({[.element] [.work]} stdlib.models.memory.u64.less [in-bounds.])
- ({[.in-bounds] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [condition.])
- ({[.input] [.base] [.width] [.start] [.out]} partial.stdlib.lfm3.cache.yes.5 [yes.])
- ({[.input] [.base] [.width] [.start] [.out]} partial.stdlib.lfm3.cache.no.5 [no.])
- ({[.condition] [.element] [.yes] [.no] unit.intro} core.if)
- ))
-
-
-(def program stdlib.lfm3.cache.host : {((cap.own mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val) ({master.grid ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({({master.index u64} :) ({((cap.own mem) val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
- ([input base width start out work grid pair.]
- ([.pair] *.elim [step rest.])
- ([.rest] *.elim [value proofs.])
- ([.proofs] *.elim [less truth.])
- ([.less] unsafe.discard unit.elim)
- ({[.input] [.base] [.width] [.start] [.out] [.work]} partial.stdlib.lfm3.cache.launch.6 [kernel.])
- ({[.grid] [.kernel]} unsafe.launch)
- (unit.elim)
- ({[.value] [.truth]} *.intro)
- ))
-
-
-(def program stdlib.lfm3.cache.run : {((cap.own mem) val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
- ([input base width start work elements.]
- ([.elements] stdlib.models.memory.alloc-bf16 [out.])
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.input] [.base] [.width] [.start] [.out] [.work] [.grid]} partial.stdlib.lfm3.cache.host.7 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
-
-(def program stdlib.lfm3.cache.into : {((cap.own mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val)} -> ((cap.own mem) val) =
- ([input base width start out work.]
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.input] [.base] [.width] [.start] [.out] [.work] [.grid]} partial.stdlib.lfm3.cache.host.7 [host.])
  ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
  ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
  ([.proof] unsafe.discard unit.elim)
@@ -1673,19 +1330,6 @@
 (def program stdlib.lfm3.pack-qkvg.run : {((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
  ([q k v gate work elements.]
  ([.elements] stdlib.models.memory.alloc-bf16 [out.])
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.q] [.k] [.v] [.gate] [.out] [.work] [.grid]} partial.stdlib.lfm3.pack-qkvg.host.7 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
-
-(def program stdlib.lfm3.pack-qkvg.into : {((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val) (u64 val)} -> ((cap.own mem) val) =
- ([q k v gate out work.]
  ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
  ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
  ({[.blocks]} stdlib.models.memory.grid [grid.])

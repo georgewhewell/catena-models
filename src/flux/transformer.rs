@@ -23,51 +23,48 @@ impl Transformer {
         debug: bool,
     ) -> Result<Self> {
         let config: TransformerConfig = read(snapshot.join("transformer/config.json"))?;
-        config.validate()?;
-        let mut weights =
-            Weights::open(&snapshot.join("transformer/diffusion_pytorch_model.safetensors"))?;
+        let mut weights = Weights::open(&super::config::transformer_checkpoint(snapshot))?;
+        let h = config.hidden_size();
+        let ff = config.intermediate_size();
         for (name, shape) in [
-            ("x_embedder.weight", vec![3072, 128]),
-            ("context_embedder.weight", vec![3072, 7680]),
+            ("x_embedder.weight", vec![h, config.in_channels]),
+            (
+                "context_embedder.weight",
+                vec![h, config.joint_attention_dim],
+            ),
             (
                 "time_guidance_embed.timestep_embedder.linear_1.weight",
-                vec![3072, 256],
+                vec![h, config.timestep_guidance_channels],
             ),
             (
                 "time_guidance_embed.timestep_embedder.linear_2.weight",
-                vec![3072, 3072],
+                vec![h, h],
             ),
-            (
-                "double_stream_modulation_img.linear.weight",
-                vec![18432, 3072],
-            ),
-            (
-                "double_stream_modulation_txt.linear.weight",
-                vec![18432, 3072],
-            ),
-            ("single_stream_modulation.linear.weight", vec![9216, 3072]),
-            ("norm_out.linear.weight", vec![6144, 3072]),
-            ("proj_out.weight", vec![128, 3072]),
+            ("double_stream_modulation_img.linear.weight", vec![6 * h, h]),
+            ("double_stream_modulation_txt.linear.weight", vec![6 * h, h]),
+            ("single_stream_modulation.linear.weight", vec![3 * h, h]),
+            ("norm_out.linear.weight", vec![2 * h, h]),
+            ("proj_out.weight", vec![config.in_channels, h]),
         ] {
             weights.validate(name, &shape)?;
         }
         for layer in 0..config.num_layers {
             for (i, suffix) in super::graph::DUAL_NAMES.iter().enumerate() {
                 let shape = match i {
-                    4 | 5 | 10 | 11 => vec![128],
-                    12 | 14 => vec![18432, 3072],
-                    13 | 15 => vec![3072, 9216],
-                    _ => vec![3072, 3072],
+                    4 | 5 | 10 | 11 => vec![config.attention_head_dim],
+                    12 | 14 => vec![2 * ff, h],
+                    13 | 15 => vec![h, ff],
+                    _ => vec![h, h],
                 };
                 weights.validate(&format!("transformer_blocks.{layer}.{suffix}"), &shape)?;
             }
         }
         for layer in 0..config.num_single_layers {
             for (suffix, shape) in [
-                ("attn.to_qkv_mlp_proj.weight", vec![27648, 3072]),
-                ("attn.to_out.weight", vec![3072, 12288]),
-                ("attn.norm_q.weight", vec![128]),
-                ("attn.norm_k.weight", vec![128]),
+                ("attn.to_qkv_mlp_proj.weight", vec![3 * h + 2 * ff, h]),
+                ("attn.to_out.weight", vec![h, h + ff]),
+                ("attn.norm_q.weight", vec![config.attention_head_dim]),
+                ("attn.norm_k.weight", vec![config.attention_head_dim]),
             ] {
                 weights.validate(
                     &format!("single_transformer_blocks.{layer}.{suffix}"),

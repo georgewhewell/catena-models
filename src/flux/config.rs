@@ -1,5 +1,5 @@
 use crate::spec::{ModelArchitecture, ModelConfig};
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use serde::Deserialize;
 use std::path::PathBuf;
 const FILES: &[&str] = &[
@@ -9,12 +9,25 @@ const FILES: &[&str] = &[
     "text_encoder/config.json",
     "text_encoder/model.safetensors.index.json",
     "transformer/config.json",
-    "transformer/diffusion_pytorch_model.safetensors",
     "vae/config.json",
     "vae/diffusion_pytorch_model.safetensors",
 ];
 pub fn snapshot(model: &str) -> Result<PathBuf> {
-    crate::hfhub::resolve_model_files(model, FILES)
+    let snapshot = crate::hfhub::resolve_model_files(model, FILES)?;
+    let single = "transformer/diffusion_pytorch_model.safetensors";
+    let index = "transformer/diffusion_pytorch_model.safetensors.index.json";
+    if snapshot.join(index).is_file() {
+        crate::hfhub::resolve_model_files(model, &[index])
+    } else {
+        crate::hfhub::resolve_model_files(model, &[single])
+            .or_else(|_| crate::hfhub::resolve_model_files(model, &[index]))
+    }
+}
+/// Select the checkpoint format present in a resolved snapshot.
+pub fn transformer_checkpoint(snapshot: &std::path::Path) -> PathBuf {
+    let single = snapshot.join("transformer/diffusion_pytorch_model.safetensors");
+    let index = single.with_extension("safetensors.index.json");
+    if index.is_file() { index } else { single }
 }
 pub use crate::hfhub::read_json as read;
 #[derive(Deserialize, Debug)]
@@ -32,18 +45,6 @@ pub struct TextConfig {
 }
 impl TextConfig {
     pub fn qwen(&self) -> Result<ModelConfig> {
-        ensure!(
-            self.hidden_size == 2560
-                && self.num_hidden_layers == 36
-                && self.intermediate_size == 9728
-                && self.num_attention_heads == 32
-                && self.num_key_value_heads == 8
-                && self.head_dim == 128
-                && self.vocab_size == 151936
-                && self.rms_norm_eps == 1e-6
-                && self.rope_theta == 1000000.,
-            "only Klein 4B Qwen3 supported"
-        );
         let mut c = ModelConfig::qwen3_0_6b();
         c.architecture = ModelArchitecture::Qwen3Dense;
         c.hidden_size = self.hidden_size;
@@ -76,21 +77,11 @@ pub struct TransformerConfig {
     pub timestep_guidance_channels: usize,
 }
 impl TransformerConfig {
-    pub fn validate(&self) -> Result<()> {
-        ensure!(
-            self.attention_head_dim == 128
-                && self.axes_dims_rope == [32, 32, 32, 32]
-                && !self.guidance_embeds
-                && self.in_channels == 128
-                && self.joint_attention_dim == 7680
-                && self.mlp_ratio == 3.0
-                && self.num_attention_heads == 24
-                && self.num_layers == 5
-                && self.num_single_layers == 20
-                && self.timestep_guidance_channels == 256,
-            "unsupported Flux2 transformer configuration"
-        );
-        Ok(())
+    pub fn hidden_size(&self) -> usize {
+        self.num_attention_heads * self.attention_head_dim
+    }
+    pub fn intermediate_size(&self) -> usize {
+        (self.hidden_size() as f32 * self.mlp_ratio) as usize
     }
 }
 #[derive(Deserialize, Debug)]
@@ -102,18 +93,4 @@ pub struct VaeConfig {
     pub patch_size: Vec<usize>,
     pub force_upcast: bool,
     pub layers_per_block: usize,
-}
-impl VaeConfig {
-    pub fn validate(&self) -> Result<()> {
-        ensure!(
-            self.block_out_channels == [128, 256, 512, 512]
-                && self.latent_channels == 32
-                && self.norm_num_groups == 32
-                && self.patch_size == [2, 2]
-                && self.force_upcast
-                && self.layers_per_block == 2,
-            "unsupported Flux2 VAE configuration"
-        );
-        Ok(())
-    }
 }

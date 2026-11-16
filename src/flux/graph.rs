@@ -365,55 +365,68 @@ impl Transformer<'_> {
         step: usize,
         dump: Option<&Path>,
     ) -> Result<MemOwn> {
-        let rows = latents.byte_len() as usize / 2 / 128;
+        let h = self.config.hidden_size();
+        let channels = self.config.in_channels;
+        let time_channels = self.config.timestep_guidance_channels;
+        let rows = latents.byte_len() as usize / 2 / channels;
         let all_rows = rows + 512;
         let ops = &self.ops;
         let embedding = ops.run(
             "flux.time-embedding",
-            vec![self.time_freq.as_ref().into(), 256u64.into(), time],
+            vec![
+                self.time_freq.as_ref().into(),
+                (time_channels as u64).into(),
+                time,
+            ],
         )?;
         let t1 = self.projection(
             embedding.as_ref(),
             "time_guidance_embed.timestep_embedder.linear_1.weight",
             1,
-            256,
-            3072,
+            time_channels,
+            h,
         )?;
-        let t1a = ops.run("flux.silu-bf16", vec![t1.as_ref().into(), 3072u64.into()])?;
+        let t1a = ops.run(
+            "flux.silu-bf16",
+            vec![t1.as_ref().into(), (h as u64).into()],
+        )?;
         let temb = self.projection(
             t1a.as_ref(),
             "time_guidance_embed.timestep_embedder.linear_2.weight",
             1,
-            3072,
-            3072,
+            h,
+            h,
         )?;
-        let ta = ops.run("flux.silu-bf16", vec![temb.as_ref().into(), 3072u64.into()])?;
+        let ta = ops.run(
+            "flux.silu-bf16",
+            vec![temb.as_ref().into(), (h as u64).into()],
+        )?;
         let mi = self.projection(
             ta.as_ref(),
             "double_stream_modulation_img.linear.weight",
             1,
-            3072,
-            18432,
+            h,
+            6 * h,
         )?;
         let mt = self.projection(
             ta.as_ref(),
             "double_stream_modulation_txt.linear.weight",
             1,
-            3072,
-            18432,
+            h,
+            6 * h,
         )?;
         let ms = self.projection(
             ta.as_ref(),
             "single_stream_modulation.linear.weight",
             1,
-            3072,
-            9216,
+            h,
+            3 * h,
         )?;
         for (name, tensor, cols) in [
-            ("temb", &temb, 3072),
-            ("mod_image", &mi, 18432),
-            ("mod_text", &mt, 18432),
-            ("mod_single", &ms, 9216),
+            ("temb", &temb, h),
+            ("mod_image", &mi, 6 * h),
+            ("mod_text", &mt, 6 * h),
+            ("mod_single", &ms, 3 * h),
         ] {
             self.ops.capture(
                 dump,
@@ -423,9 +436,15 @@ impl Transformer<'_> {
                 true,
             )?;
         }
-        let mut image = self.projection(latents, "x_embedder.weight", rows, 128, 3072)?;
-        let mut text = self.projection(conditioning, "context_embedder.weight", 512, 7680, 3072)?;
-        let scale = 1. / 128f32.sqrt();
+        let mut image = self.projection(latents, "x_embedder.weight", rows, channels, h)?;
+        let mut text = self.projection(
+            conditioning,
+            "context_embedder.weight",
+            512,
+            self.config.joint_attention_dim,
+            h,
+        )?;
+        let scale = 1. / (self.config.attention_head_dim as f32).sqrt();
         for layer in 0..self.config.num_layers {
             let mut args: Vec<Argument> = vec![
                 image.as_ref().into(),
@@ -443,26 +462,30 @@ impl Transformer<'_> {
             }
             args.extend([(rows as u64).into(), self.config.eps.into(), scale.into()]);
             let joint = ops.run("flux.dual-block", args)?;
-            if layer == 0 || layer == 4 {
+            if layer == 0 || layer + 1 == self.config.num_layers {
                 self.ops.capture(
                     dump,
                     &format!("step_{step}_dual_{layer}"),
                     &joint,
-                    &[1, all_rows, 3072],
+                    &[1, all_rows, h],
                     true,
                 )?;
             }
-            image = ops.slice(joint.as_ref(), rows, 3072, 3072, 512 * 3072, true)?;
-            text = ops.slice(joint.as_ref(), 512, 3072, 3072, 0, true)?;
-            discard_log!("step {step}: dual block {}/5", layer + 1);
+            image = ops.slice(joint.as_ref(), rows, h, h, 512 * h, true)?;
+            text = ops.slice(joint.as_ref(), 512, h, h, 0, true)?;
+            discard_log!(
+                "step {step}: dual block {}/{}",
+                layer + 1,
+                self.config.num_layers
+            );
         }
         let mut joint = ops.run(
             "flux.rows-bf16",
             vec![
                 text.as_ref().into(),
                 image.as_ref().into(),
-                ((all_rows * 3072) as u64).into(),
-                (512 * 3072u64).into(),
+                ((all_rows * h) as u64).into(),
+                (512 * (h as u64)).into(),
             ],
         )?;
         for layer in 0..self.config.num_single_layers {
@@ -494,37 +517,41 @@ impl Transformer<'_> {
                     dump,
                     &format!("step_{step}_single_{layer}"),
                     &joint,
-                    &[1, all_rows, 3072],
+                    &[1, all_rows, h],
                     true,
                 )?;
             }
-            discard_log!("step {step}: single block {}/20", layer + 1);
+            discard_log!(
+                "step {step}: single block {}/{}",
+                layer + 1,
+                self.config.num_single_layers
+            );
         }
-        image = ops.slice(joint.as_ref(), rows, 3072, 3072, 512 * 3072, true)?;
+        image = ops.slice(joint.as_ref(), rows, h, h, 512 * h, true)?;
         let norm = ops.norm(
             image.as_ref(),
             ops.zero.as_ref(),
             ops.zero.as_ref(),
             rows,
-            3072,
+            h,
             1,
             0,
             0,
             self.config.eps,
             true,
         )?;
-        let out_mod = self.projection(ta.as_ref(), "norm_out.linear.weight", 1, 3072, 6144)?;
+        let out_mod = self.projection(ta.as_ref(), "norm_out.linear.weight", 1, h, 2 * h)?;
         // AdaLayerNormContinuous projection order is scale, shift (op uses shift, scale).
-        let shift = ops.slice(out_mod.as_ref(), 1, 6144, 3072, 3072, true)?;
-        let scales = ops.slice(out_mod.as_ref(), 1, 6144, 3072, 0, true)?;
+        let shift = ops.slice(out_mod.as_ref(), 1, 2 * h, h, h, true)?;
+        let scales = ops.slice(out_mod.as_ref(), 1, 2 * h, h, 0, true)?;
         let swapped = ops.run(
             "flux.concat-bf16",
             vec![
                 shift.as_ref().into(),
                 scales.as_ref().into(),
-                6144u64.into(),
-                3072u64.into(),
-                3072u64.into(),
+                ((2 * h) as u64).into(),
+                (h as u64).into(),
+                (h as u64).into(),
             ],
         )?;
         let modulated = ops.run(
@@ -532,17 +559,17 @@ impl Transformer<'_> {
             vec![
                 norm.as_ref().into(),
                 swapped.as_ref().into(),
-                ((rows * 3072) as u64).into(),
-                3072u64.into(),
+                ((rows * h) as u64).into(),
+                (h as u64).into(),
                 0u64.into(),
             ],
         )?;
-        let velocity = self.projection(modulated.as_ref(), "proj_out.weight", rows, 3072, 128)?;
+        let velocity = self.projection(modulated.as_ref(), "proj_out.weight", rows, h, channels)?;
         self.ops.capture(
             dump,
             &format!("step_{step}_velocity"),
             &velocity,
-            &[1, rows, 128],
+            &[1, rows, channels],
             true,
         )?;
         Ok(velocity)
@@ -906,11 +933,28 @@ fn input(name: &str, bytes: usize) -> Memory {
         owned: false,
     }
 }
-const TRANSFORMER: &str = concat!(
-    include_str!("../catena/flux_transformer_dual.hex"),
-    "\n",
-    include_str!("../catena/flux_transformer_single.hex")
-);
+fn transformer_block(source: &str, config: &TransformerConfig) -> String {
+    let h = config.hidden_size();
+    let ff = config.intermediate_size();
+    let mut source = source.to_owned();
+    for (name, value) in [
+        ("hidden", h),
+        ("twice-hidden", 2 * h),
+        ("ff", ff),
+        ("combined", h + ff),
+        ("gate-offset", 5 * h),
+        ("twice-ff", 2 * ff),
+        ("qkv-ff", 3 * h + 2 * ff),
+        ("text-count", super::text::SEQUENCE * h),
+        ("heads", config.num_attention_heads),
+        ("head-dim", config.attention_head_dim),
+        ("ff-mod-offset", 3 * h),
+        ("qkv-offset", 3 * h),
+    ] {
+        source = source.replace(&format!("@{name}@"), &c(value as u64));
+    }
+    source
+}
 pub fn transformer(
     config: &TransformerConfig,
     height: usize,
@@ -918,7 +962,6 @@ pub fn transformer(
     steps: usize,
     debug: bool,
 ) -> Result<Program> {
-    config.validate()?;
     ensure!(
         height > 0 && width > 0 && height % 16 == 0 && width % 16 == 0 && steps > 0,
         "invalid generation dimensions or steps"
@@ -1038,7 +1081,7 @@ pub fn transformer(
         } else {
             model.predict_velocity(
                 latents.as_ref(),
-                input("conditioning", 512 * 7680 * 2),
+                input("conditioning", 512 * config.joint_attention_dim * 2),
                 time.into(),
                 step,
                 debug.then_some(Path::new("debug")),
@@ -1062,14 +1105,16 @@ pub fn transformer(
         )?;
     }
     drop(model);
-    let mut extra = TRANSFORMER.to_string();
+    let dual = transformer_block(include_str!("../catena/flux_transformer_dual.hex"), config);
+    let single = transformer_block(
+        include_str!("../catena/flux_transformer_single.hex"),
+        config,
+    );
+    let mut extra = format!("{dual}\n{single}");
     if let Some(program) = velocity_program {
         extra += &program.source;
     }
-    for (src, n) in [
-        (include_str!("../catena/flux_transformer_dual.hex"), 5),
-        (include_str!("../catena/flux_transformer_single.hex"), 3),
-    ] {
+    for (src, n) in [(dual.as_str(), 5), (single.as_str(), 3)] {
         extra += &owned_network(src, n);
     }
     let mut program = finish(
@@ -1086,7 +1131,6 @@ pub fn transformer(
     Ok(program)
 }
 pub fn vae(config: &VaeConfig, height: usize, width: usize, debug: bool) -> Result<Program> {
-    config.validate()?;
     ensure!(
         height > 0 && width > 0 && height % 16 == 0 && width % 16 == 0,
         "invalid image dimensions"

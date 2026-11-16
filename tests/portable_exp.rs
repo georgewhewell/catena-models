@@ -8,7 +8,6 @@ fn module(dialect: GpuDialect) -> anyhow::Result<RuntimeModule> {
             include_str!("../src/catena/memory.hex"),
             include_str!("../src/catena/numeric.hex"),
             "(def program test-exp : (f32 val) -> (f32 val) = (stdlib.models.math.exp))",
-            "(def program test-bf16-exp : (f32 val) -> (f32 val) = (f32.to-bf16 stdlib.models.memory.bf16.exp bf16.to-f32))",
         ]),
         dialect,
     )
@@ -25,8 +24,6 @@ fn exponential_uses_hex_on_both_backends() -> anyhow::Result<()> {
                 .all(|function| !function.source_name.starts_with("stdlib.models."))
         );
         assert!(!module.source.contains("expf("));
-        // The compiler emits unused SDK helper definitions alongside BF16 support.
-        assert_eq!(module.source.matches("catena_bf16_exp(").count(), 1);
     }
     for source in [
         include_str!("../src/catena/qwen35.hex"),

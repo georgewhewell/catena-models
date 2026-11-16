@@ -13,17 +13,13 @@ fn module() -> Result<catena_lang::runtime::RuntimeModule> {
         ("linear64", "linear", 64),
         ("linear128", "linear", 128),
         ("gate", "gate", 64),
-        ("patch", "patch", 64),
         ("gelu", "gelu", 64),
-        ("gelu-tanh", "gelu-tanh", 64),
         ("linear-bf16", "linear-bf16", 64),
         ("gelu-bf16", "gelu-bf16", 64),
         ("gelu-tanh-bf16", "gelu-tanh-bf16", 64),
-        ("patch-bf16", "patch-bf16", 64),
     ] {
         let extra = match kind {
             "gate" => " [.up] [.bias]",
-            "patch" | "patch-bf16" => " [.up]",
             _ => "",
         };
         entries += &format!(
@@ -88,11 +84,8 @@ fn projections_and_fused_epilogues() -> Result<()> {
             "linear64",
             "linear128",
             "gate",
-            "patch",
             "gelu",
-            "gelu-tanh",
             "linear-bf16",
-            "patch-bf16",
             "gelu-bf16",
             "gelu-tanh-bf16",
         ] {
@@ -122,14 +115,9 @@ fn projections_and_fused_epilogues() -> Result<()> {
                         .map(|j| rounded(x[r * k + j]) * rounded(up[c * k + j]))
                         .sum::<f32>();
                     let bf16 = name.ends_with("-bf16");
-                    let g = if bf16 && !name.starts_with("patch") {
-                        rounded(g)
-                    } else {
-                        g
-                    };
+                    let g = if bf16 { rounded(g) } else { g };
                     let mut expected = match name.trim_end_matches("-bf16") {
                         "gate" => g / (1. + (-g).exp()) * (u + bias[c]),
-                        "patch" => g + u,
                         "gelu-tanh" => g / (1. + (-1.5957692 * (g + 0.044715 * g * g * g)).exp()),
                         "gelu" => {
                             let z = g / std::f32::consts::SQRT_2;
