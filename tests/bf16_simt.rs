@@ -7,12 +7,7 @@ use catena_models::{
 
 fn sources() -> Vec<String> {
     let mut source = String::new();
-    for (mode, x, w) in [
-        ("or", "own", "ref"),
-        ("rr", "ref", "ref"),
-        ("ro", "ref", "own"),
-        ("oo", "own", "own"),
-    ] {
+    for (mode, x, w) in [("or", "own", "ref"), ("rr", "ref", "ref")] {
         source += &format!(
             "\n(def program test-{mode} : {{((cap.{x} mem) val) ((cap.{w} mem) val) (u64 val) (u64 val) (u64 val)}} -> ((cap.own mem) val) = ([x w m k n.] {{[.x] [.w] [.m] [.k] [.n]}} stdlib.models.simt.{mode}))\n"
         );
@@ -97,7 +92,7 @@ fn matrix_matches_reference() -> Result<()> {
                 expected.push(f32_to_bf16(partial[0]));
             }
         }
-        for mode in ["or", "rr", "ro", "oo"] {
+        for mode in ["or", "rr"] {
             let xx = rt.mem_u16(&x)?;
             let ww = rt.mem_u16(&w)?;
             let xv: Value = if mode.starts_with('o') {

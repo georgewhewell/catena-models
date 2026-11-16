@@ -933,8 +933,6 @@
   ([.] unit.intro meta.bf16numeric.right [rid.])
   ([.b rid] smolcat.value.named_at [y.])
   ([.x y e] stdlib.numeric.* :.forget)))
-(def program stdlib.models.memory.bf16.exp : (bf16 val) -> (bf16 val) =
- (bf16.to-f32 stdlib.models.math.exp f32.to-bf16))
 (def program stdlib.models.memory.u32.equal : {(u32 val) (u32 val)} -> (bool val) =
  ([a b.]
   ([.a b] stdlib.models.memory.u32.less_equal [x0.])

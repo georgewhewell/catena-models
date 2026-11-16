@@ -60,18 +60,6 @@
  [.result]
  ))
 
-(def program stdlib.flux.CONSTANT-NAME.into : {((cap.own mem) val) (u64 val)} -> ((cap.own mem) val) =
- ([out work.]
- ({[.work] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
- ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
- ({[.blocks]} stdlib.models.memory.grid [grid.])
- ({[.out] [.work] [.grid]} partial.stdlib.flux.CONSTANT-NAME.host.3 [host.])
- ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
- ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
- ([.proof] unsafe.discard unit.elim)
- [.result]
- ))
-
 (def program flux.CONSTANT-NAME : {} -> ((cap.own mem) val) =
  ([.]
  ({} const.u64.0x{{COUNT}} [count.])
