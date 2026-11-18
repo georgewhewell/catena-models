@@ -4,6 +4,7 @@ pub mod flux;
 pub mod hfhub;
 mod lfm3;
 pub mod model;
+pub mod phonon;
 mod qwen;
 mod session_graph;
 pub mod spec;
