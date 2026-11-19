@@ -430,7 +430,11 @@ pub(super) async fn create(
             );
         }
     };
-    if request.model != state.model.as_ref() {
+    let model = state
+        .model
+        .as_ref()
+        .expect("responses route requires a model");
+    if request.model != model.as_ref() {
         return rejected_request(
             StatusCode::NOT_FOUND,
             "model_not_found",
@@ -438,7 +442,7 @@ pub(super) async fn create(
             &incoming,
         );
     }
-    let prepared = match request.prepare(&state.model) {
+    let prepared = match request.prepare(model) {
         Ok(p) => p,
         Err(e) => {
             return rejected_request(
@@ -451,7 +455,7 @@ pub(super) async fn create(
     };
     drop(incoming);
     let mut output = Output::new(
-        state.model.clone(),
+        model.clone(),
         prepared.custom,
         prepared.settings,
         request.stream,

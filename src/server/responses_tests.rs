@@ -354,7 +354,7 @@ fn app() -> (
     .unwrap();
     (
         router(ServerState {
-            model: Arc::from("test"),
+            model: Some(Arc::from("test")),
             key: Some(Arc::from("test-key")),
             jobs: worker.sender,
         }),
@@ -548,7 +548,7 @@ async fn responses_share_authentication_body_limits_and_queue() {
     })
     .unwrap();
     let app = router(ServerState {
-        model: Arc::from("test"),
+        model: Some(Arc::from("test")),
         key: None,
         jobs: tx,
     });
@@ -625,7 +625,7 @@ async fn strict_codex_titles_are_validated_for_json_and_sse() {
     }
     let worker = engine::start(|| Ok(Titles), Arc::new(AtomicBool::new(false))).unwrap();
     let app = router(ServerState {
-        model: Arc::from("test"),
+        model: Some(Arc::from("test")),
         key: None,
         jobs: worker.sender,
     });

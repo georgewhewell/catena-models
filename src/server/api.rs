@@ -28,18 +28,26 @@ use tokio::sync::mpsc;
 
 #[derive(Clone)]
 pub struct ServerState {
-    pub model: Arc<str>,
+    pub model: Option<Arc<str>>,
     pub key: Option<Arc<str>>,
     pub jobs: mpsc::Sender<Job>,
 }
 
 pub fn router(state: ServerState) -> Router {
-    Router::new()
+    let mut router = Router::new()
         .route("/health", get(health))
         .route("/v1/models", get(models))
-        .route("/v1/chat/completions", post(chat))
-        .route("/v1/systemone", post(systemone))
-        .route("/v1/responses", post(super::responses::create))
+        .route(
+            "/v1/text-to-speech/{voice_id}",
+            post(super::speech::convert),
+        );
+    if state.model.is_some() {
+        router = router
+            .route("/v1/chat/completions", post(chat))
+            .route("/v1/systemone", post(systemone))
+            .route("/v1/responses", post(super::responses::create));
+    }
+    router
         .fallback(|| async { error(StatusCode::NOT_FOUND, "not_found", "unknown endpoint") })
         .method_not_allowed_fallback(|| async {
             error(
@@ -87,7 +95,17 @@ async fn models(State(state): State<ServerState>, headers: HeaderMap) -> Respons
             "invalid or missing bearer token",
         );
     }
-    Json(json!({"object":"list","data":[{"id":&*state.model,"object":"model","created":0,"owned_by":"catena"}]})).into_response()
+    let model = state.model.as_deref();
+    let ids = if model.is_some() {
+        model.as_slice()
+    } else {
+        super::speech::MODELS
+    };
+    let data = ids
+        .iter()
+        .map(|id| json!({"id":id,"object":"model","created":0,"owned_by":"catena"}))
+        .collect::<Vec<_>>();
+    Json(json!({"object":"list","data":data})).into_response()
 }
 fn error_json(kind: &str, message: &str) -> Value {
     json!({"error":{"message":message,"type":kind,"param":null,"code":null}})
@@ -395,26 +413,13 @@ pub(super) async fn enqueue(
     generation: Generation,
 ) -> Result<mpsc::Receiver<Event>, Box<Response>> {
     let (tx, mut rx) = mpsc::channel(32);
-    match state.jobs.try_send(Job::Generate {
-        request: generation,
-        output: tx,
-    }) {
-        Ok(()) => {}
-        Err(mpsc::error::TrySendError::Full(_)) => {
-            return Err(Box::new(error(
-                StatusCode::TOO_MANY_REQUESTS,
-                "rate_limit_error",
-                "inference queue is full",
-            )));
-        }
-        Err(_) => {
-            return Err(Box::new(error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "server_error",
-                "inference worker is unavailable",
-            )));
-        }
-    }
+    try_enqueue(
+        state,
+        Job::Generate {
+            request: generation,
+            output: tx,
+        },
+    )?;
     match rx.recv().await {
         Some(Event::Started) => Ok(rx),
         Some(Event::Failed(f)) => Err(Box::new(failure(f))),
@@ -422,6 +427,22 @@ pub(super) async fn enqueue(
             StatusCode::INTERNAL_SERVER_ERROR,
             "server_error",
             "inference worker stopped unexpectedly",
+        ))),
+    }
+}
+
+pub(super) fn try_enqueue(state: &ServerState, job: Job) -> Result<(), Box<Response>> {
+    match state.jobs.try_send(job) {
+        Ok(()) => Ok(()),
+        Err(mpsc::error::TrySendError::Full(_)) => Err(Box::new(error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limit_error",
+            "inference queue is full",
+        ))),
+        Err(mpsc::error::TrySendError::Closed(_)) => Err(Box::new(error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "server_error",
+            "inference worker is unavailable",
         ))),
     }
 }
@@ -452,10 +473,11 @@ async fn chat(
             );
         }
     };
-    if request.model != state.model.as_ref() {
+    let model = state.model.as_ref().expect("chat route requires a model");
+    if request.model != model.as_ref() {
         return error(StatusCode::NOT_FOUND, "model_not_found", "unknown model");
     }
-    let generation = match request.normalize(&state.model) {
+    let generation = match request.normalize(model) {
         Ok(r) => r,
         Err(e) => return error(StatusCode::BAD_REQUEST, "invalid_request_error", &e),
     };
@@ -463,7 +485,7 @@ async fn chat(
         Ok(rx) => rx,
         Err(error) => return *error,
     };
-    let envelope = Envelope::new(state.model);
+    let envelope = Envelope::new(model.clone());
     let include_usage = request
         .stream_options
         .as_ref()
@@ -702,7 +724,11 @@ async fn systemone(
             );
         }
     };
-    if body.get("model").is_some_and(|m| m != &*state.model) {
+    let model = state
+        .model
+        .as_deref()
+        .expect("decision route requires a model");
+    if body.get("model").is_some_and(|m| m != model) {
         return error(
             StatusCode::BAD_REQUEST,
             "invalid_request_error",
@@ -720,22 +746,8 @@ async fn systemone(
         }
     };
     let (output, rx) = tokio::sync::oneshot::channel();
-    match state.jobs.try_send(Job::Decide { request, output }) {
-        Ok(()) => {}
-        Err(mpsc::error::TrySendError::Full(_)) => {
-            return error(
-                StatusCode::TOO_MANY_REQUESTS,
-                "rate_limit_error",
-                "inference queue is full",
-            );
-        }
-        Err(_) => {
-            return error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "server_error",
-                "inference worker is unavailable",
-            );
-        }
+    if let Err(response) = try_enqueue(&state, Job::Decide { request, output }) {
+        return *response;
     }
     match rx.await {
         Ok(Ok(response)) => Json(response).into_response(),

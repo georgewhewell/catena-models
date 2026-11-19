@@ -3,6 +3,7 @@ use super::{
     output::{OutputParser, StopFilter},
     prefix_cache::{self, Entry, PREFILL_BLOCK, PrefixCache},
     prompt::Prompt,
+    speech::VoiceCache,
     tools::{Call, Tool},
 };
 use catena_models::{
@@ -94,6 +95,12 @@ pub enum Job {
         request: catena_models::systemone::Request,
         output: tokio::sync::oneshot::Sender<Result<Value, Failure>>,
     },
+    Synthesize {
+        text: String,
+        model_id: String,
+        voice: String,
+        output: tokio::sync::oneshot::Sender<Result<String, Failure>>,
+    },
 }
 pub struct Sink {
     pub output: mpsc::Sender<Event>,
@@ -152,6 +159,7 @@ pub fn start<B: Backend + 'static>(
                     return;
                 }
             };
+            let mut speech = VoiceCache::default();
             while let Some(job) = receiver.blocking_recv() {
                 match job {
                     Job::Generate { request, output } => {
@@ -171,6 +179,16 @@ pub fn start<B: Backend + 'static>(
                                 output.is_closed() || shutdown.load(Ordering::Relaxed)
                             });
                             let _ = output.send(result);
+                        }
+                    }
+                    Job::Synthesize {
+                        text,
+                        model_id,
+                        voice,
+                        output,
+                    } => {
+                        if !output.is_closed() && !shutdown.load(Ordering::Relaxed) {
+                            let _ = output.send(speech.synthesize(model_id, voice, &text));
                         }
                     }
                 }
@@ -768,6 +786,7 @@ mod prefix_tests {
 pub enum ModelBackend {
     Chat(QwenBackend),
     Decision(catena_models::systemone::Runner),
+    Speech,
 }
 impl Backend for ModelBackend {
     fn generate(&mut self, request: Generation, sink: &Sink) -> Result<(), Failure> {
@@ -776,6 +795,7 @@ impl Backend for ModelBackend {
             Self::Decision(_) => Err(Failure::unsupported(
                 "this is a decision model; use /v1/systemone",
             )),
+            Self::Speech => Err(Failure::unsupported("this server only serves speech")),
         }
     }
     fn decide(
@@ -784,7 +804,9 @@ impl Backend for ModelBackend {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Value, Failure> {
         match self {
-            Self::Chat(_) => Err(Failure::unsupported("this model is not a decision model")),
+            Self::Chat(_) | Self::Speech => {
+                Err(Failure::unsupported("this model is not a decision model"))
+            }
             Self::Decision(runner) => runner.run_cancellable(&request, cancelled).map_err(|e| {
                 if e.is::<catena_models::systemone::InvalidRequest>() {
                     Failure::invalid(e.to_string())

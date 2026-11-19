@@ -1,4 +1,4 @@
-//! Text generation and System One decision serving. HTTP schemas and inference are deliberately separate.
+//! HTTP serving for text generation, System One decisions, and Phonon speech.
 mod api;
 mod engine;
 mod output;
@@ -9,6 +9,7 @@ mod responses;
 mod responses_output;
 #[cfg(test)]
 mod responses_tests;
+mod speech;
 mod structured;
 #[cfg(test)]
 mod tests;
@@ -29,6 +30,9 @@ use std::{
 #[derive(Debug, Args)]
 #[group(conflicts_with_all = ["prompt", "image", "bench", "generate_entrypoint"])]
 pub struct ServeOptions {
+    /// Serve Phonon speech only, loading its model on the first request.
+    #[arg(long, requires = "serve", conflicts_with = "model")]
+    tts_only: bool,
     /// Listening address (use 0.0.0.0 for remote access).
     #[arg(long, default_value = "127.0.0.1", requires = "serve")]
     host: IpAddr,
@@ -50,10 +54,15 @@ pub struct ServeOptions {
     api_key: Option<String>,
 }
 
+impl ServeOptions {
+    pub fn tts_only(&self) -> bool {
+        self.tts_only
+    }
+}
+
 pub fn run(
     config: ServeOptions,
-    model: String,
-    path: PathBuf,
+    model: Option<(String, PathBuf)>,
     options: InferenceOptions,
 ) -> Result<()> {
     anyhow::ensure!(
@@ -61,24 +70,22 @@ pub fn run(
         "API key must not be empty"
     );
     let shutdown = Arc::new(AtomicBool::new(false));
-    eprintln!("loading model for serving");
-    let decision = catena_models::systemone::Metadata::read(&path)?.is_some();
-    let projector = if decision {
-        Some(catena_models::hfhub::download_mmproj(&model)?)
-    } else {
-        None
-    };
-    let worker_model = model.clone();
+    let model_id = model.as_ref().map(|(model, _)| Arc::from(model.as_str()));
     let worker = engine::start(
         move || {
-            if decision {
+            let Some((model, path)) = model else {
+                return Ok(engine::ModelBackend::Speech);
+            };
+            eprintln!("loading model for serving");
+            if catena_models::systemone::Metadata::read(&path)?.is_some() {
+                let projector = catena_models::hfhub::download_mmproj(&model)?;
                 Ok(engine::ModelBackend::Decision(
                     catena_models::systemone::Runner::load(
                         &path,
-                        projector.as_deref(),
+                        Some(&projector),
                         options,
                         config.ctx_size,
-                        worker_model,
+                        model,
                     )?,
                 ))
             } else {
@@ -93,7 +100,7 @@ pub fn run(
         shutdown.clone(),
     )?;
     let state = api::ServerState {
-        model: Arc::from(model),
+        model: model_id,
         key: config.api_key.map(Arc::from),
         jobs: worker.sender,
     };

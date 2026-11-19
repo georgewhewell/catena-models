@@ -85,6 +85,120 @@ fn events(body: &str) -> Vec<Value> {
         .map(|s| serde_json::from_str(s).unwrap())
         .collect()
 }
+
+#[tokio::test]
+async fn speech_returns_only_base64_wav() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use catena_models::{phonon::DEFAULT_MODEL, tts::Audio};
+    use std::io::Cursor;
+    use tokio::sync::mpsc::{self, error::TryRecvError};
+
+    let (jobs, mut receiver) = mpsc::channel(1);
+    let app = router(ServerState {
+        model: None,
+        key: Some(Arc::from("secret")),
+        jobs,
+    });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/v1/models")
+                .header("authorization", "Bearer secret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let models: Value = serde_json::from_str(&body(response).await).unwrap();
+    let ids: Vec<_> = models["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|model| model["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, super::speech::MODELS);
+    for path in ["/v1/chat/completions", "/v1/responses", "/v1/systemone"] {
+        let response = app
+            .clone()
+            .oneshot(Request::post(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+    let request = |value: Value, authorized| {
+        let mut request = Request::post("/v1/text-to-speech/The%20Snow%20Queen")
+            .header("content-type", "application/json");
+        if authorized {
+            request = request.header("authorization", "Bearer secret");
+        }
+        request.body(Body::from(value.to_string())).unwrap()
+    };
+    let valid = json!({"text":"Hello","model_id":DEFAULT_MODEL});
+    assert_eq!(
+        app.clone()
+            .oneshot(request(valid.clone(), false))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    for invalid in [
+        json!({"text":"Hello"}),
+        json!({"text":" ","model_id":DEFAULT_MODEL}),
+        json!({"text":"Hello","model_id":"chat-model"}),
+    ] {
+        assert_eq!(
+            app.clone()
+                .oneshot(request(invalid, true))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert!(matches!(receiver.try_recv(), Err(TryRecvError::Empty)));
+
+    let serve = app.oneshot(request(valid, true));
+    let synthesize = async {
+        let Some(Job::Synthesize {
+            text,
+            model_id,
+            voice,
+            output,
+        }) = receiver.recv().await
+        else {
+            panic!("expected a synthesis job");
+        };
+        assert_eq!(text, "Hello");
+        assert_eq!(model_id, DEFAULT_MODEL);
+        assert_eq!(voice, "The Snow Queen");
+        let audio = Audio {
+            samples: vec![0.0, 0.5],
+            sample_rate: 24_000,
+        };
+        output
+            .send(Ok(STANDARD.encode(audio.wav_bytes().unwrap())))
+            .unwrap();
+    };
+    let (response, ()) = tokio::join!(serve, synthesize);
+    let response = response.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/plain; charset=utf-8"
+    );
+    let bytes = STANDARD.decode(body(response).await).unwrap();
+    let mut wav = hound::WavReader::new(Cursor::new(bytes)).unwrap();
+    assert_eq!(wav.spec().sample_rate, 24_000);
+    assert_eq!(wav.spec().channels, 1);
+    assert_eq!(wav.spec().bits_per_sample, 16);
+    assert_eq!(
+        wav.samples::<i16>().collect::<Result<Vec<_>, _>>().unwrap(),
+        [0, 16_384]
+    );
+}
+
 #[tokio::test]
 async fn json_stream_tools_auth_and_errors() {
     let calls = Arc::new(AtomicUsize::new(0));
@@ -95,7 +209,7 @@ async fn json_stream_tools_auth_and_errors() {
     )
     .unwrap();
     let app = router(ServerState {
-        model: Arc::from("test"),
+        model: Some(Arc::from("test")),
         key: Some(Arc::from("secret")),
         jobs: worker.sender,
     });
@@ -223,7 +337,7 @@ async fn json_stream_tools_auth_and_errors() {
 async fn queue_saturation_and_worker_unavailability() {
     let (tx, rx) = tokio::sync::mpsc::channel::<Job>(1);
     let app = router(ServerState {
-        model: Arc::from("test"),
+        model: Some(Arc::from("test")),
         key: None,
         jobs: tx.clone(),
     });
@@ -311,7 +425,7 @@ async fn dropped_http_stream_cancels_generation_and_next_request_succeeds() {
     )
     .unwrap();
     let app = router(ServerState {
-        model: Arc::from("test"),
+        model: Some(Arc::from("test")),
         key: None,
         jobs: worker.sender,
     });
@@ -337,7 +451,7 @@ async fn dropped_http_stream_cancels_generation_and_next_request_succeeds() {
 async fn malformed_oversized_and_unknown_requests_keep_error_envelopes() {
     let (tx, _rx) = tokio::sync::mpsc::channel::<Job>(1);
     let app = router(ServerState {
-        model: Arc::from("test"),
+        model: Some(Arc::from("test")),
         key: None,
         jobs: tx,
     });
@@ -423,7 +537,7 @@ async fn protocol_logs_capture_requests_responses_and_sse_without_credentials() 
     )
     .unwrap();
     let app = router(ServerState {
-        model: Arc::from("test"),
+        model: Some(Arc::from("test")),
         key: Some(Arc::from("credential-not-for-logs")),
         jobs: worker.sender,
     });
@@ -496,7 +610,7 @@ async fn systemone_auth_validation_and_dispatch() {
     }
     let worker = engine::start(|| Ok(Decisions), Arc::new(AtomicBool::new(false))).unwrap();
     let app = router(ServerState {
-        model: Arc::from("test"),
+        model: Some(Arc::from("test")),
         key: Some(Arc::from("secret")),
         jobs: worker.sender,
     });
@@ -557,7 +671,7 @@ async fn systemone_auth_validation_and_dispatch() {
     )
     .unwrap();
     let app = router(ServerState {
-        model: Arc::from("test"),
+        model: Some(Arc::from("test")),
         key: None,
         jobs: worker.sender,
     });

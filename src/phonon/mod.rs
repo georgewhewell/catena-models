@@ -45,6 +45,22 @@ struct VoiceEntry {
     filename: String,
 }
 
+/// The requested name is absent from the Gradium voice catalog.
+#[derive(Debug)]
+pub struct UnknownVoice(String);
+
+impl std::fmt::Display for UnknownVoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unknown Phonon voice {:?}. See {VOICE_REPO}/{VOICE_CATALOG} for names",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for UnknownVoice {}
+
 fn voice_filename(catalog: &str, name: &str) -> Result<String> {
     let mut filename = None;
     for (index, line) in catalog.lines().enumerate() {
@@ -62,9 +78,7 @@ fn voice_filename(catalog: &str, name: &str) -> Result<String> {
             filename = Some(voice.filename);
         }
     }
-    filename.with_context(|| {
-        format!("unknown Phonon voice {name:?}. See {VOICE_REPO}/{VOICE_CATALOG} for names")
-    })
+    filename.ok_or_else(|| UnknownVoice(name.to_owned()).into())
 }
 
 fn resolve_voice(name: &str) -> Result<PathBuf> {

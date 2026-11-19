@@ -85,6 +85,34 @@ returns `429`. Dropping a request cancels inference between GPU operations and
 releases its session. HTTP model/health requests remain responsive during
 inference. Request bodies are limited to 8 MiB. Ctrl-C shuts the server down.
 
+## Text to speech
+
+Start a speech-only server with `--serve --tts-only`.
+
+```bash
+CATENA_API_KEY=local-secret cargo run -r -- --serve --tts-only
+```
+
+In this mode, `/health` reports worker readiness and `/v1/models` lists the
+supported Phonon checkpoint IDs. The first synthesis request loads its chosen
+model and voice.
+
+`POST /v1/text-to-speech/{voice_id}` uses the exact Gradium voice name
+as the path parameter. URL-encode spaces in names. The JSON body requires
+`text` and a Phonon `model_id`. The server loads the model and voice on the
+first request and caches the most recent pair.
+
+```bash
+curl -fsS http://localhost:8000/v1/text-to-speech/Easton \
+  -H 'Authorization: Bearer local-secret' \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Hello from Phonon.","model_id":"gradium/phonon-31m-en"}' \
+  | base64 --decode > speech.wav
+```
+
+The response body is plain base64. It decodes to a 24 kHz mono PCM16 WAV.
+See the [Gradium voice catalog](https://huggingface.co/gradium/phonon-voices/blob/main/voices.jsonl).
+
 ## Prompt prefix caching
 
 Prefix caching is enabled by default for both APIs. It keeps at most two GPU
