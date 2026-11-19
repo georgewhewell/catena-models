@@ -241,13 +241,20 @@ Select the non-commercially licensed gradium/phonon-40m-{en,fr,de,pt,es} or
 `gradium/phonon-40m-multilingual` with `--model` for English, French, German,
 Portuguese, or Spanish text.
 
+Use `--language en|fr|de|pt|es` to select a language checkpoint or
+`--language auto` to let the multilingual checkpoint infer the language
+from the text. The English checkpoint remains the default. Pass either
+`--language` or `--model`.
+
 ```bash
 cargo run -r --bin phonon-tts -- --model gradium/phonon-40m-multilingual \
   --output bonjour.wav 'Bonjour, comment allez-vous aujourd’hui ?'
 ```
 
-Both models use the Easton voice from `gradium/phonon-voices` and the
-`gradium/phonon-mimi` decoder.
+Phonon uses the `gradium/phonon-mimi` decoder and defaults to the Easton voice.
+Use `--voice Zoey` or quote a multiword name, such as
+`--voice 'The Snow Queen'`. Spell the name as it appears in the Gradium
+[voice catalog](https://huggingface.co/gradium/phonon-voices/blob/main/voices.jsonl).
 
 Long text is split into utterances targeting 50 tokens each. Phonon prefers
 sentence and clause boundaries and joins the decoded utterances with short
