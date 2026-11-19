@@ -1,6 +1,6 @@
 //! LFM3 text graphs with model-specific projections and shared attention helpers.
 use crate::{
-    catena::{InferenceOptions, KernelKind},
+    catena::{InferenceOptions, KernelKind, definitions},
     qwen::{c, call, header},
     spec::{ModelConfig, weight_specs},
 };
@@ -46,35 +46,6 @@ pub(crate) fn validate(cfg: &ModelConfig, options: InferenceOptions) -> Result<(
         "LFM3 attention layers must share their KV width"
     );
     Ok(())
-}
-
-/// Select shared helper families without importing another architecture's graphs.
-fn definitions(source: &str, prefixes: &[&str]) -> String {
-    let mut out = String::new();
-    for (start, _) in source.match_indices("(def program ") {
-        let tail = &source[start + 13..];
-        let name = tail.split_whitespace().next().unwrap();
-        if !prefixes.iter().any(|p| {
-            p.strip_suffix(':')
-                .map_or_else(|| name.starts_with(p), |exact| name == exact)
-        }) {
-            continue;
-        }
-        let mut depth = 0;
-        for (i, ch) in source[start..].char_indices() {
-            match ch {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                _ => (),
-            }
-            if depth == 0 {
-                out.push_str(&source[start..start + i + 1]);
-                out.push('\n');
-                break;
-            }
-        }
-    }
-    out
 }
 
 struct Emit<'a> {

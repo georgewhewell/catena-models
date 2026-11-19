@@ -230,6 +230,36 @@ with `python3 tools/generate-flux-wmma-linear.py` and
 the VAE's F32-interface projections. Timings separate VAE decode, RGB
 readback, and PNG conversion/write.
 
+## Phonon TTS
+
+```bash
+cargo run -r --bin phonon-tts -- --output speech.wav 'Hello from Phonon.'
+```
+
+The default english only Apache 2.0 model is `gradium/phonon-31m-en`.
+Select the non-commercially licensed gradium/phonon-40m-{en,fr,de,pt,es} or
+`gradium/phonon-40m-multilingual` with `--model` for English, French, German,
+Portuguese, or Spanish text.
+
+```bash
+cargo run -r --bin phonon-tts -- --model gradium/phonon-40m-multilingual \
+  --output bonjour.wav 'Bonjour, comment allez-vous aujourd’hui ?'
+```
+
+Both models use the Easton voice from `gradium/phonon-voices` and the
+`gradium/phonon-mimi` decoder.
+
+Long text is split into utterances targeting 50 tokens each. Phonon prefers
+sentence and clause boundaries and joins the decoded utterances with short
+pauses in a single WAV.
+
+Hex handles Phonon and Mimi in one call per utterance. It samples seeded noise
+on the GPU and keeps the end-of-speech state on the device. The bounded frame
+loop launches kernels through the frame budget. After the end-of-speech tail,
+the kernels skip model work. Rust reads the valid PCM and writes the
+WAV. `--timings` reports the combined synthesis time. The GPU sampler produces a
+different waveform for a given seed than the previous CPU sampler.
+
 ## MMS English TTS
 
 ```bash

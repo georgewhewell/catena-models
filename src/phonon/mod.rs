@@ -1,0 +1,659 @@
+//! Gradium Phonon speech generation and Mimi decoding through Catena.
+use crate::{
+    catena, hfhub, model,
+    weights::{Weights, bf16},
+};
+use anyhow::{Context, Result, bail, ensure};
+use catena_lang::runtime::{Artifact, MemOwn, Runtime, Value};
+use serde::Deserialize;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
+use tokenizers::{Encoding, Tokenizer};
+
+pub use crate::tts::Audio;
+
+pub const DEFAULT_MODEL: &str = "gradium/phonon-31m-en";
+const CODEC: &str = "gradium/phonon-mimi";
+const VOICE_REPO: &str = "gradium/phonon-voices";
+const VOICE: &str = "voices/LMDIYE0Oa377Qh6Z.safetensors";
+const TOKENIZER: &str = "tokenizer.5.0.0.json";
+const HIDDEN: usize = 512;
+const LATENT: usize = 32;
+const CONTEXT: usize = 8192;
+const SAMPLE_RATE: u32 = 24_000;
+const UTTERANCE_TOKENS: usize = 50;
+const PAUSE_SAMPLES: usize = SAMPLE_RATE as usize * 120 / 1000;
+
+struct Backbone {
+    layers: u64,
+    source: &'static str,
+}
+
+struct Assets {
+    model: PathBuf,
+    codec: PathBuf,
+    voice: PathBuf,
+}
+
+impl Assets {
+    fn resolve(model: &str) -> Result<Self> {
+        let model = hfhub::resolve_model_files(
+            model,
+            &[
+                "config.json",
+                "generation_config.json",
+                "processor_config.json",
+                TOKENIZER,
+                "model.safetensors",
+            ],
+        )?;
+        let codec = hfhub::resolve_model_files(CODEC, &["config.json", "model.safetensors"])?;
+        let voice = hfhub::resolve_model_files(VOICE_REPO, &[VOICE])?.join(VOICE);
+        Ok(Self {
+            model,
+            codec,
+            voice,
+        })
+    }
+
+    fn validate(&self) -> Result<Backbone> {
+        use serde_json::{Value, json};
+        let path = self.model.join("config.json");
+        let config: Value = hfhub::read_json(&path)?;
+        let (layers, source) = match config["num_hidden_layers"].as_u64() {
+            Some(6) => (6, include_str!("../catena/phonon-6.hex")),
+            Some(9) => (9, include_str!("../catena/phonon-9.hex")),
+            _ => bail!(
+                "{}: unsupported Phonon backbone depth {}",
+                path.display(),
+                config["num_hidden_layers"]
+            ),
+        };
+        check_config_fields(
+            &config,
+            &json!({
+                "model_type": "gradium_phonon_tts",
+                "hidden_size": HIDDEN, "audio_prompt_dim": HIDDEN, "latent_dim": LATENT, "vocab_size": 4001,
+                "intermediate_size": 2048, "head_dim": 64, "hidden_act": "gelu",
+                "num_attention_heads": 8, "num_key_value_heads": 8,
+                "layer_norm_eps": 1e-5, "frame_rate": 12.5, "max_position_embeddings": CONTEXT,
+                "rope_parameters": {"rope_theta": 10000.0, "rope_type": "default"},
+                "num_speakers": 1, "num_speakers_embedding_dim": 16, "duration_delta": 0.0,
+                "duration_delta_embedding_dim": 128, "audio_bos_token_id": 4,
+                "audio_prompt_token_id": 5, "audio_latent_token_id": 6,
+                "flow_head_config": {
+                    "flow_type": "lsd", "hidden_size": HIDDEN, "condition_dim": HIDDEN, "latent_dim": LATENT,
+                    "frequency_embedding_size": 256, "num_hidden_layers": 6, "hidden_act": "silu",
+                    "layer_norm_eps": 1e-6, "rms_norm_eps": 1e-5,
+                }
+            }),
+            "",
+        ).with_context(|| path.display().to_string())?;
+        check_config(
+            self.model.join("generation_config.json"),
+            json!({
+                "do_sample": true, "eos_threshold": 4.0, "min_frames_before_eos": 0,
+                "num_flow_steps": 1, "temperature": 0.3,
+            }),
+        )?;
+        check_config(
+            self.model.join("processor_config.json"),
+            json!({
+                "audio_tokenizer": {"audio_tokenizer_name_or_path": CODEC},
+                "frames_after_eos": 1, "frames_after_eos_short_text": 3, "short_text_max_words": 4,
+                "fade_in_duration": 0.0,
+            }),
+        )?;
+        check_config(
+            self.codec.join("config.json"),
+            json!({
+                "model_type": "pocket_tts_audio_tokenizer", "audio_channels": 1, "latent_dim": LATENT,
+                "sampling_rate": SAMPLE_RATE, "latent_stride": 16, "upsample_groups": HIDDEN,
+                "hidden_size": HIDDEN, "head_dim": 64, "intermediate_size": 2048, "num_attention_heads": 8,
+                "num_key_value_heads": 8, "num_hidden_layers": 2, "hidden_act": "gelu",
+                "rope_parameters": {"rope_theta": 10000.0, "rope_type": "default"},
+                "sliding_window": 251, "norm_eps": 1e-5, "use_causal_conv": true,
+                "pad_mode": "constant", "trim_right_ratio": 1.0, "upsampling_ratios": [6, 5, 4],
+                "num_filters": 64, "num_residual_layers": 1, "residual_kernel_size": 3,
+                "compress": 2, "use_conv_shortcut": false, "kernel_size": 7, "last_kernel_size": 3,
+            }),
+        )?;
+        Ok(Backbone { layers, source })
+    }
+}
+
+fn check_config(path: PathBuf, expected: serde_json::Value) -> Result<()> {
+    check_config_fields(&hfhub::read_json(&path)?, &expected, "")
+        .with_context(|| path.display().to_string())
+}
+
+fn check_config_fields(
+    actual: &serde_json::Value,
+    expected: &serde_json::Value,
+    key: &str,
+) -> Result<()> {
+    if let Some(fields) = expected.as_object() {
+        for (name, expected) in fields {
+            let key = if key.is_empty() {
+                name.clone()
+            } else {
+                format!("{key}.{name}")
+            };
+            check_config_fields(&actual[name], expected, &key)?;
+        }
+    } else {
+        ensure!(
+            actual == expected,
+            "unsupported {key}: expected {expected}, got {actual}"
+        );
+    }
+    Ok(())
+}
+
+fn bundle(backbone_source: &str) -> String {
+    let mut source = include_str!("../catena/memory.hex").to_owned();
+    for fragment in [
+        include_str!("../catena/numeric.hex"),
+        include_str!("../catena/resources.hex"),
+        include_str!("../catena/cooperative.hex"),
+        include_str!("../catena/bf16_simt.hex"),
+        include_str!("../catena/whisper.hex"),
+        include_str!("../catena/phonon.hex"),
+        backbone_source,
+    ] {
+        crate::qwen::fused::append_hex(&mut source, fragment);
+    }
+    source.replace(" bf16x2.dot-f32 ", " stdlib.models.math.dot-pair-f32 ")
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Packing {
+    Conv,
+    Qkv,
+    Transposed,
+}
+
+#[derive(Deserialize)]
+struct Binding {
+    names: Vec<String>,
+    shape: Vec<usize>,
+    packing: Option<Packing>,
+    #[serde(default)]
+    codec: bool,
+}
+
+impl Binding {
+    fn upload_f32(&self, runtime: &Runtime, weights: &Weights) -> Result<MemOwn> {
+        let mut values = Vec::new();
+        for name in &self.names {
+            values.extend(weights.host_f32(name)?);
+        }
+        if let Some(packing) = &self.packing {
+            // Device convolution reads weights with the output channel as the fastest axis.
+            let packed = match packing {
+                Packing::Conv | Packing::Qkv => {
+                    let co = self.shape[0] * self.names.len();
+                    let ci = self.shape[1];
+                    let taps = self.shape.get(2).copied().unwrap_or(1);
+                    let mut packed = vec![0.0; values.len()];
+                    for tap in 0..taps {
+                        for i in 0..ci {
+                            for o in 0..co {
+                                packed[(tap * ci + i) * co + o] = values[(o * ci + i) * taps + tap];
+                            }
+                        }
+                    }
+                    packed
+                }
+                Packing::Transposed => {
+                    let (ci, co, taps) = (self.shape[0], self.shape[1], self.shape[2]);
+                    let mut packed = vec![0.0; values.len()];
+                    for tap in 0..taps {
+                        for i in 0..ci {
+                            for o in 0..co {
+                                packed[(tap * ci + i) * co + o] = values[(i * co + o) * taps + tap];
+                            }
+                        }
+                    }
+                    packed
+                }
+            };
+            return Ok(runtime.mem_f32(&packed)?);
+        }
+        Ok(runtime.mem_f32(&values)?)
+    }
+}
+
+type Bindings = BTreeMap<String, Vec<Binding>>;
+
+struct Checkpoints {
+    model: Weights,
+    codec: Weights,
+    voice: Vec<f32>,
+    voice_frames: usize,
+    bindings: Bindings,
+}
+
+impl Checkpoints {
+    fn load(assets: &Assets, layers: u64) -> Result<Self> {
+        let model = Weights::open(&assets.model.join("model.safetensors"))?;
+        let codec = Weights::open(&assets.codec.join("model.safetensors"))?;
+        let voice = Weights::open(&assets.voice)?;
+        let voice_tensor = voice
+            .tensors
+            .get("speaker_wavs")
+            .context("voice is missing speaker_wavs")?;
+        let [1, HIDDEN, voice_frames] = voice_tensor.shape.as_slice() else {
+            bail!("expected speaker_wavs with shape [1, {HIDDEN}, frames]");
+        };
+        let voice_frames = *voice_frames;
+        ensure!(
+            (1..CONTEXT).contains(&voice_frames),
+            "invalid voice frame count"
+        );
+        let voice = voice.host_f32("speaker_wavs")?;
+        ensure!(
+            voice.iter().all(|x| x.is_finite()),
+            "voice contains non-finite values"
+        );
+        let mut generated: Bindings = serde_json::from_str(include_str!("weights.json"))?;
+        let mut bindings = Bindings::new();
+        for (name, key) in [
+            ("setup", "setup".to_owned()),
+            ("synthesize", format!("synthesize-{layers}")),
+        ] {
+            bindings.insert(
+                name.to_owned(),
+                generated
+                    .remove(&key)
+                    .with_context(|| format!("missing generated Phonon bindings for {key}"))?,
+            );
+        }
+        for entry in bindings.values() {
+            for binding in entry {
+                let weights = if binding.codec { &codec } else { &model };
+                for name in &binding.names {
+                    weights.validate(name, &binding.shape)?;
+                }
+            }
+        }
+        for (name, shape) in [
+            ("flow_lm.emb_mean", &[LATENT][..]),
+            ("flow_lm.emb_std", &[LATENT][..]),
+        ] {
+            model.validate(name, shape)?;
+        }
+        Ok(Self {
+            model,
+            codec,
+            voice,
+            voice_frames,
+            bindings,
+        })
+    }
+}
+
+struct Prompt {
+    ids: Vec<u64>,
+    words: usize,
+}
+
+impl Prompt {
+    fn tokenize(tokenizer: &Tokenizer, text: &str) -> Result<Encoding> {
+        let text = text.trim();
+        ensure!(!text.is_empty(), "text must contain a spoken prompt");
+        let encoded = tokenizer.encode(text, false).map_err(anyhow::Error::msg)?;
+        let ids = encoded.get_ids();
+        ensure!(!ids.is_empty(), "text produces no tokens");
+        ensure!(
+            ids.iter().all(|id| !(1..=6).contains(id) && *id < 4001),
+            "text contains a reserved Phonon token"
+        );
+        Ok(encoded)
+    }
+
+    fn from_encoding(tokenizer: &Tokenizer, encoded: &Encoding) -> Result<Self> {
+        let ids = encoded.get_ids();
+        ensure!(ids.len() < CONTEXT, "text exceeds Phonon's context window");
+        let normalized = tokenizer.decode(ids, true).map_err(anyhow::Error::msg)?;
+        let words = normalized.split_whitespace().count();
+        ensure!(words > 0, "text produces no spoken words");
+        Ok(Self {
+            ids: ids.iter().map(|&x| u64::from(x)).collect(),
+            words,
+        })
+    }
+
+    fn split(tokenizer: &Tokenizer, text: &str) -> Result<Vec<Self>> {
+        let text = text.trim();
+        let encoded = Self::tokenize(tokenizer, text)?;
+        if encoded.len() <= UTTERANCE_TOKENS {
+            return Ok(vec![Self::from_encoding(tokenizer, &encoded)?]);
+        }
+
+        let offsets = encoded.get_offsets();
+        let mut prompts = Vec::new();
+        let (mut first, mut start) = (0, 0);
+        while offsets.len() - first > UTTERANCE_TOKENS {
+            // Prefer the latest sentence end, then a clause or word boundary.
+            // Use source offsets so model normalization runs again for each chunk.
+            let (next, end) = (first + 1..=first + UTTERANCE_TOKENS)
+                .filter_map(|next| {
+                    let end = offsets[next - 1].1;
+                    (end > start
+                        && end < text.len()
+                        && end <= offsets[next].0
+                        && text.is_char_boundary(end))
+                    .then_some((next, end))
+                })
+                .max_by_key(|&(next, end)| (boundary_rank(text, end), next))
+                .context("could not split Phonon text at a token boundary")?;
+            let chunk = Self::tokenize(tokenizer, &text[start..end])?;
+            prompts.push(Self::from_encoding(tokenizer, &chunk)?);
+            (first, start) = (next, end);
+        }
+        let chunk = Self::tokenize(tokenizer, &text[start..])?;
+        prompts.push(Self::from_encoding(tokenizer, &chunk)?);
+        Ok(prompts)
+    }
+}
+
+fn boundary_rank(text: &str, end: usize) -> u8 {
+    let (left, right) = text.split_at(end);
+    let left = left.trim_end();
+    if right.starts_with(['.', '!', '?', '…', ',', ';', ':', '"', '”', '»', ')', ']']) {
+        return 0;
+    }
+    let punctuation = left.trim_end_matches(['"', '\'', '”', '’', '»', ')', ']']);
+    let mut chars = punctuation.chars().rev();
+    let mark = chars.next();
+    let decimal = matches!(mark, Some('.' | ','))
+        && chars.next().is_some_and(|c| c.is_ascii_digit())
+        && right.starts_with(|c: char| c.is_ascii_digit());
+    match mark {
+        Some('.' | '!' | '?' | '…') if !decimal => 3,
+        Some(',' | ';' | ':') if !decimal => 2,
+        _ if left.len() < end || right.starts_with(char::is_whitespace) => 1,
+        _ => 0,
+    }
+}
+
+fn read_tokenizer(dir: &Path) -> Result<Tokenizer> {
+    Tokenizer::from_file(dir.join(TOKENIZER))
+        .map_err(anyhow::Error::msg)
+        .context("loading Phonon tokenizer")
+}
+
+fn outputs<const N: usize>(values: Vec<Value<'static>>) -> Result<[MemOwn; N]> {
+    values
+        .into_iter()
+        .map(|v| match v {
+            Value::MemOwn(mem) => Ok(mem),
+            _ => bail!("invalid Phonon entrypoint result"),
+        })
+        .collect::<Result<Vec<_>>>()?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("invalid Phonon entrypoint result count"))
+}
+
+struct Graphs {
+    runtime: Runtime,
+    artifact: Artifact,
+    weights: BTreeMap<Vec<String>, MemOwn>,
+    bindings: Bindings,
+}
+
+impl Graphs {
+    fn load(checkpoints: &mut Checkpoints, backbone_source: &str) -> Result<Self> {
+        let source = bundle(backbone_source);
+        let (runtime, artifact) = catena::load_runtime(
+            catena::runtime_sources(&source),
+            model::configured_gpu_dialect()?,
+        )
+        .context("compiling and loading Phonon Hex")?;
+        let mut weights = BTreeMap::new();
+        for bindings in checkpoints.bindings.values() {
+            for binding in bindings {
+                if weights.contains_key(&binding.names) {
+                    continue;
+                }
+                let mem = if binding.codec {
+                    binding.upload_f32(&runtime, &checkpoints.codec)?
+                } else {
+                    runtime.mem_u16(&bf16(&checkpoints.model.host_f32(&binding.names[0])?))?
+                };
+                weights.insert(binding.names.clone(), mem);
+            }
+        }
+        Ok(Self {
+            runtime,
+            artifact,
+            weights,
+            bindings: std::mem::take(&mut checkpoints.bindings),
+        })
+    }
+
+    fn execute<'a>(
+        &'a self,
+        entry: &str,
+        mut inputs: Vec<Value<'a>>,
+    ) -> Result<Vec<Value<'static>>> {
+        inputs.extend(
+            self.bindings[entry]
+                .iter()
+                .map(|binding| self.weights[&binding.names].as_ref().into()),
+        );
+        Ok(self
+            .artifact
+            .exec_values(&format!("phonon.{entry}"), inputs)?)
+    }
+
+    fn run<'a, const N: usize>(
+        &'a self,
+        entry: &str,
+        inputs: Vec<Value<'a>>,
+    ) -> Result<[MemOwn; N]> {
+        outputs(self.execute(entry, inputs)?)
+            .with_context(|| format!("decoding Phonon {entry} outputs"))
+    }
+}
+
+/// Phonon speech synthesis with the Easton voice and Mimi decoder.
+pub struct Phonon {
+    graphs: Graphs,
+    tokenizer: Tokenizer,
+    voice_frames: usize,
+    voice: MemOwn,
+    cond: MemOwn,
+    bos: MemOwn,
+    time: MemOwn,
+    zero: MemOwn,
+    latent_std: MemOwn,
+    latent_mean: MemOwn,
+}
+
+impl Phonon {
+    pub fn load() -> Result<Self> {
+        Self::load_model(DEFAULT_MODEL)
+    }
+
+    /// Load a compatible Phonon checkpoint from the Hugging Face Hub.
+    pub fn load_model(model: &str) -> Result<Self> {
+        let assets = Assets::resolve(model)?;
+        let backbone = assets.validate()?;
+        let tokenizer = read_tokenizer(&assets.model)?;
+        let mut checkpoints = Checkpoints::load(&assets, backbone.layers)?;
+        let graphs = Graphs::load(&mut checkpoints, backbone.source)?;
+        let runtime = &graphs.runtime;
+        let model = &checkpoints.model;
+        let voice = runtime.mem_u16(&bf16(&checkpoints.voice))?;
+        let mut setup = graphs.execute(
+            "setup",
+            vec![
+                voice.as_ref().into(),
+                (checkpoints.voice_frames as u64).into(),
+            ],
+        )?;
+        let Some(Value::U64(text_limit)) = setup.pop() else {
+            bail!("invalid Phonon setup result");
+        };
+        ensure!(text_limit > 0, "Phonon voice leaves no room for text");
+        let [voice, cond, bos, time] = outputs(setup)?;
+        let zero = runtime.mem_f32(&[0.0; 2048])?;
+        let latent_std = runtime.mem_u16(&bf16(&model.host_f32("flow_lm.emb_std")?))?;
+        let latent_mean = runtime.mem_u16(&bf16(&model.host_f32("flow_lm.emb_mean")?))?;
+        Ok(Self {
+            graphs,
+            tokenizer,
+            voice_frames: checkpoints.voice_frames,
+            voice,
+            cond,
+            bos,
+            time,
+            zero,
+            latent_std,
+            latent_mean,
+        })
+    }
+
+    /// Synthesize text as one or more utterances with a reproducible sampling seed.
+    pub fn synthesize(&self, text: &str, seed: u64, timings: bool) -> Result<Audio> {
+        let prompts = Prompt::split(&self.tokenizer, text)?;
+        let mut samples = Vec::new();
+        let mut synthesis = Duration::ZERO;
+        for (index, prompt) in prompts.iter().enumerate() {
+            let started = Instant::now();
+            let chunk = self.synthesize_utterance(prompt, seed, index as u64)?;
+            synthesis += started.elapsed();
+            if index == 0 {
+                samples = chunk;
+            } else {
+                samples.resize(samples.len() + PAUSE_SAMPLES, 0.0);
+                samples.extend(chunk);
+            }
+        }
+        if timings {
+            let synthesis = synthesis.as_secs_f64();
+            let seconds = samples.len() as f64 / f64::from(SAMPLE_RATE);
+            eprintln!(
+                "Phonon synthesis {synthesis:.3}s, audio {seconds:.3}s, real-time factor {:.3} ({} utterances)",
+                synthesis / seconds,
+                prompts.len()
+            );
+        }
+        Ok(Audio {
+            samples,
+            sample_rate: SAMPLE_RATE,
+        })
+    }
+
+    fn synthesize_utterance(&self, prompt: &Prompt, seed: u64, index: u64) -> Result<Vec<f32>> {
+        let ids = self.graphs.runtime.mem_u64(&prompt.ids)?;
+        let [waveform, descriptor] = self.graphs.run(
+            "synthesize",
+            vec![
+                ids.as_ref().into(),
+                self.voice.as_ref().into(),
+                self.bos.as_ref().into(),
+                self.cond.as_ref().into(),
+                self.time.as_ref().into(),
+                self.zero.as_ref().into(),
+                self.latent_std.as_ref().into(),
+                self.latent_mean.as_ref().into(),
+                (self.voice_frames as u64).into(),
+                (prompt.ids.len() as u64).into(),
+                (prompt.words as u64).into(),
+                seed.into(),
+                index.into(),
+            ],
+        )?;
+        let result = descriptor.try_to_u64_vec()?;
+        let [sample_count, error] = result.as_slice() else {
+            bail!("invalid Phonon result descriptor");
+        };
+        match error {
+            0 => {}
+            1 => bail!("text and audio frame budget exceed Phonon's context window"),
+            2 => bail!("Phonon produced an invalid end-of-speech score"),
+            _ => bail!("invalid Phonon generation status"),
+        }
+        let valid = usize::try_from(*sample_count).context("invalid Phonon sample count")?;
+        let mut samples = waveform.try_to_f32_vec()?;
+        ensure!(
+            valid > 0 && valid <= samples.len(),
+            "invalid Phonon sample count"
+        );
+        samples.truncate(valid);
+        ensure!(
+            samples.iter().all(|x| x.is_finite()),
+            "Mimi produced non-finite audio"
+        );
+        Ok(samples)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires the three cached Gradium repositories"]
+    fn cached_assets_and_prompt() -> Result<()> {
+        let assets = Assets::resolve(DEFAULT_MODEL)?;
+        let backbone = assets.validate()?;
+        let checkpoint = Checkpoints::load(&assets, backbone.layers)?;
+        assert_eq!(checkpoint.voice_frames, 125);
+        let tokenizer = read_tokenizer(&assets.model)?;
+        let prompts = Prompt::split(&tokenizer, " Hello from Phonon. ")?;
+        let [prompt] = prompts.as_slice() else {
+            bail!("short text should produce one utterance");
+        };
+        assert_eq!(prompt.ids, [3248, 744, 949, 1286, 697, 860, 663]);
+        assert_eq!(prompt.words, 3);
+        assert_eq!(
+            Prompt::split(&tokenizer, "This is a longer sentence")?[0].words,
+            5
+        );
+        assert!(Prompt::split(&tokenizer, "   ").is_err());
+        assert!(Prompt::split(&tokenizer, "Hello <|audio_bos|>").is_err());
+        let long = "Hello from Phonon. ".repeat(1_500);
+        let utterances = Prompt::split(&tokenizer, &long)?;
+        assert_eq!(
+            utterances.iter().map(|prompt| prompt.words).sum::<usize>(),
+            4_500
+        );
+        assert!(
+            utterances
+                .iter()
+                .all(|prompt| prompt.ids.len() <= UTTERANCE_TOKENS)
+        );
+        let long_clause = "bonjour ".repeat(100);
+        let utterances = Prompt::split(&tokenizer, &long_clause)?;
+        assert!(utterances.len() > 1);
+        assert_eq!(
+            utterances.iter().map(|prompt| prompt.words).sum::<usize>(),
+            100
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "compiles both Phonon backbones for HIP and CUDA"]
+    fn synthesis_compiles_without_host_reads() -> Result<()> {
+        use catena_lang::runtime::GpuDialect;
+        for backbone in [
+            include_str!("../catena/phonon-6.hex"),
+            include_str!("../catena/phonon-9.hex"),
+        ] {
+            let source = bundle(backbone);
+            for dialect in [GpuDialect::Hip, GpuDialect::Cuda] {
+                let module = catena::compile_sources(catena::runtime_sources(&source), dialect)?;
+                assert!(!module.source.contains("= catena_host_read("));
+            }
+        }
+        Ok(())
+    }
+}
