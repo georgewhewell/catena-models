@@ -16,9 +16,10 @@ use tokenizers::{Encoding, Tokenizer};
 pub use crate::tts::Audio;
 
 pub const DEFAULT_MODEL: &str = "gradium/phonon-31m-en";
+pub const DEFAULT_VOICE: &str = "Easton";
 const CODEC: &str = "gradium/phonon-mimi";
 const VOICE_REPO: &str = "gradium/phonon-voices";
-const VOICE: &str = "voices/LMDIYE0Oa377Qh6Z.safetensors";
+const VOICE_CATALOG: &str = "voices.jsonl";
 const TOKENIZER: &str = "tokenizer.5.0.0.json";
 const HIDDEN: usize = 512;
 const LATENT: usize = 32;
@@ -38,8 +39,68 @@ struct Assets {
     voice: PathBuf,
 }
 
+#[derive(Deserialize)]
+struct VoiceEntry {
+    name: String,
+    filename: String,
+}
+
+/// The requested name is absent from the Gradium voice catalog.
+#[derive(Debug)]
+pub struct UnknownVoice(String);
+
+impl std::fmt::Display for UnknownVoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unknown Phonon voice {:?}. See {VOICE_REPO}/{VOICE_CATALOG} for names",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for UnknownVoice {}
+
+fn voice_filename(catalog: &str, name: &str) -> Result<String> {
+    let mut filename = None;
+    for (index, line) in catalog.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let voice: VoiceEntry = serde_json::from_str(line)
+            .with_context(|| format!("parsing {VOICE_CATALOG} line {}", index + 1))?;
+        if voice.name == name {
+            ensure!(filename.is_none(), "ambiguous Phonon voice {name:?}");
+            ensure!(
+                voice.filename.ends_with(".safetensors"),
+                "invalid checkpoint filename for Phonon voice {name:?}"
+            );
+            filename = Some(voice.filename);
+        }
+    }
+    filename.ok_or_else(|| UnknownVoice(name.to_owned()).into())
+}
+
+fn resolve_voice(name: &str) -> Result<PathBuf> {
+    let name = name.trim();
+    ensure!(!name.is_empty(), "Phonon voice name must not be blank");
+    let root = hfhub::resolve_model_files(VOICE_REPO, &[VOICE_CATALOG])?;
+    let catalog = root.join(VOICE_CATALOG);
+    let data = std::fs::read_to_string(&catalog)
+        .with_context(|| format!("reading {}", catalog.display()))?;
+    let filename = voice_filename(&data, name)?;
+    let snapshot = hfhub::resolve_model_files(VOICE_REPO, &[&filename])
+        .with_context(|| format!("resolving Phonon voice {name:?}"))?;
+    ensure!(
+        snapshot == root,
+        "Phonon voice catalog changed snapshots during resolution. Retry loading the voice"
+    );
+    Ok(snapshot.join(filename))
+}
+
 impl Assets {
-    fn resolve(model: &str) -> Result<Self> {
+    fn resolve(model: &str, voice: &str) -> Result<Self> {
+        let voice = resolve_voice(voice)?;
         let model = hfhub::resolve_model_files(
             model,
             &[
@@ -51,7 +112,6 @@ impl Assets {
             ],
         )?;
         let codec = hfhub::resolve_model_files(CODEC, &["config.json", "model.safetensors"])?;
-        let voice = hfhub::resolve_model_files(VOICE_REPO, &[VOICE])?.join(VOICE);
         Ok(Self {
             model,
             codec,
@@ -462,7 +522,7 @@ impl Graphs {
     }
 }
 
-/// Phonon speech synthesis with the Easton voice and Mimi decoder.
+/// Phonon speech synthesis with a catalog voice and Mimi decoder.
 pub struct Phonon {
     graphs: Graphs,
     tokenizer: Tokenizer,
@@ -483,7 +543,12 @@ impl Phonon {
 
     /// Load a compatible Phonon checkpoint from the Hugging Face Hub.
     pub fn load_model(model: &str) -> Result<Self> {
-        let assets = Assets::resolve(model)?;
+        Self::load_model_with_voice(model, DEFAULT_VOICE)
+    }
+
+    /// Load a compatible Phonon checkpoint and a voice by its catalog name.
+    pub fn load_model_with_voice(model: &str, voice: &str) -> Result<Self> {
+        let assets = Assets::resolve(model, voice)?;
         let backbone = assets.validate()?;
         let tokenizer = read_tokenizer(&assets.model)?;
         let mut checkpoints = Checkpoints::load(&assets, backbone.layers)?;
@@ -599,10 +664,11 @@ impl Phonon {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     #[ignore = "requires the three cached Gradium repositories"]
     fn cached_assets_and_prompt() -> Result<()> {
-        let assets = Assets::resolve(DEFAULT_MODEL)?;
+        let assets = Assets::resolve(DEFAULT_MODEL, DEFAULT_VOICE)?;
         let backbone = assets.validate()?;
         let checkpoint = Checkpoints::load(&assets, backbone.layers)?;
         assert_eq!(checkpoint.voice_frames, 125);

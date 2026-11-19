@@ -10,6 +10,7 @@ use catena_lang::runtime::{Artifact, MemOwn, Runtime, Value};
 use serde::Deserialize;
 use std::{
     collections::BTreeMap,
+    io::{Cursor, Seek, Write},
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -110,19 +111,32 @@ pub struct Audio {
 }
 impl Audio {
     pub fn write_wav(&self, path: &Path) -> Result<()> {
+        self.encode_wav(hound::WavWriter::create(path, self.wav_spec()?)?)
+    }
+
+    pub fn wav_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        self.encode_wav(hound::WavWriter::new(
+            Cursor::new(&mut bytes),
+            self.wav_spec()?,
+        )?)?;
+        Ok(bytes)
+    }
+
+    fn wav_spec(&self) -> Result<hound::WavSpec> {
         ensure!(
             !self.samples.is_empty() && self.samples.iter().all(|x| x.is_finite()),
             "invalid synthesized waveform"
         );
-        let mut wav = hound::WavWriter::create(
-            path,
-            hound::WavSpec {
-                channels: 1,
-                sample_rate: self.sample_rate,
-                bits_per_sample: 16,
-                sample_format: hound::SampleFormat::Int,
-            },
-        )?;
+        Ok(hound::WavSpec {
+            channels: 1,
+            sample_rate: self.sample_rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        })
+    }
+
+    fn encode_wav(&self, mut wav: hound::WavWriter<impl Write + Seek>) -> Result<()> {
         for &x in &self.samples {
             wav.write_sample((x.clamp(-1., 1.) * 32767.).round() as i16)?;
         }

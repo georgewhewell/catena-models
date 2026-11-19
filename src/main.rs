@@ -123,6 +123,9 @@ fn main() -> Result<()> {
     let matches = Args::command().get_matches();
     let args = Args::from_arg_matches(&matches)?;
     let options = inference_options(&args)?;
+    if args.server.tts_only() {
+        return server::run(args.server, None, options);
+    }
     let checkpoint = download_gguf(&args.model)?;
     eprintln!(
         "selected {} GGUF file(s) from the Hugging Face cache",
@@ -130,7 +133,7 @@ fn main() -> Result<()> {
     );
     let selected_gguf = checkpoint.primary;
     if args.serve {
-        return server::run(args.server, args.model, selected_gguf, options);
+        return server::run(args.server, Some((args.model, selected_gguf)), options);
     }
     if let Some(path) = &args.systemone {
         let bytes = if path == std::path::Path::new("-") {
@@ -578,6 +581,18 @@ mod cli_tests {
         }
         assert!(
             Args::try_parse_from(["app", "--model", "test", "--prompt", "hi", "--port", "1234"])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn tts_only_requires_serving_without_a_chat_model() {
+        let args =
+            Args::try_parse_from(["app", "--serve", "--tts-only", "--port", "9000"]).unwrap();
+        assert!(args.server.tts_only());
+        assert!(Args::try_parse_from(["app", "--tts-only"]).is_err());
+        assert!(
+            Args::try_parse_from(["app", "--serve", "--tts-only", "--model", "some/model"])
                 .is_err()
         );
     }
