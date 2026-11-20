@@ -7,6 +7,9 @@ use std::{path::PathBuf, time::Instant};
 #[command(about = "OmniVoice text-to-speech through Catena (24 kHz WAV)")]
 struct Args {
     text: String,
+    /// English voice directions, such as "whisper" or an experimental emotion prompt
+    #[arg(long, value_name = "DIRECTIONS")]
+    instruct: Option<String>,
     #[arg(long, default_value = "speech.wav")]
     output: PathBuf,
     #[arg(long, default_value_t = 0)]
@@ -27,7 +30,7 @@ fn main() -> Result<()> {
         eprintln!("load and compile {:.3}s", start.elapsed().as_secs_f64());
     }
     let start = Instant::now();
-    let audio = model.synthesize(&args.text, args.seed)?;
+    let audio = model.synthesize_with_instruct(&args.text, args.seed, args.instruct.as_deref())?;
     if args.timings {
         eprintln!("synthesis {:.3}s", start.elapsed().as_secs_f64());
     }

@@ -280,6 +280,10 @@ the masked audio codes and decodes them to mono 24 kHz audio in one invocation.
 Use `--timings` to report load and synthesis times.
 Set `CATENA_GPU_DIALECT=cuda` to run on NVIDIA GPUs with compute capability 8.0 or later.
 
+Use `--instruct "whisper"` for a documented English voice attribute, or try
+`--instruct "excited and happy"` for experimental emotion prompting. The
+effect of free-form directions varies with the prompt.
+
 ## MMS English TTS
 
 ```bash

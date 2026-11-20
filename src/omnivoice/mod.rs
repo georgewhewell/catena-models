@@ -112,7 +112,18 @@ impl OmniVoice {
 
     /// Generate a single text-only utterance with reproducible sampling.
     pub fn synthesize(&self, text: &str, seed: u64) -> Result<Audio> {
-        let tokens = prompt::tokens(&self.tokenizer, text)?;
+        self.synthesize_with_instruct(text, seed, None)
+    }
+
+    /// Generate an utterance with optional English voice directions.
+    /// Free-form emotion directions are experimental.
+    pub fn synthesize_with_instruct(
+        &self,
+        text: &str,
+        seed: u64,
+        instruct: Option<&str>,
+    ) -> Result<Audio> {
+        let tokens = prompt::tokens(&self.tokenizer, text, instruct)?;
         let frames = prompt::duration_frames(text);
         ensure!(
             frames <= MAX_FRAMES,
@@ -363,7 +374,7 @@ mod tests {
         let directory = hfhub::resolve_model_files(DEFAULT_MODEL, FILES)?;
         let model = OmniVoice::load_snapshot(&directory, true)?;
         let text = "This is a sentence without any voice prompt.";
-        let ids = prompt::tokens(&model.tokenizer, text)?;
+        let ids = prompt::tokens(&model.tokenizer, text, None)?;
         assert_eq!(
             ids,
             [
@@ -371,10 +382,16 @@ mod tests {
                 894, 7743, 9934, 13, 151675
             ]
         );
+        let conditioned = prompt::tokens(&model.tokenizer, text, Some(" excited and happy "))?;
+        assert_eq!(
+            &conditioned[..9],
+            &[151670, 4064, 151671, 151672, 39441, 1608, 323, 6247, 151673]
+        );
+        assert_eq!(&conditioned[9..], &ids[6..]);
         assert_eq!(prompt::duration_frames(text), 67);
         let multilingual = "你好 （世界） [sigh]！";
         assert_eq!(
-            prompt::tokens(&model.tokenizer, multilingual)?,
+            prompt::tokens(&model.tokenizer, multilingual, None)?,
             [
                 151670, 4064, 151671, 151672, 4064, 151673, 151674, 108386, 7, 99489, 8, 220,
                 11880, 1090, 60, 6313, 151675

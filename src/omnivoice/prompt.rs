@@ -2,7 +2,6 @@ use anyhow::{Result, anyhow, ensure};
 use tokenizers::Tokenizer;
 use unicode_categories::UnicodeCategories;
 
-const STYLE: &str = "<|lang_start|>None<|lang_end|><|instruct_start|>None<|instruct_end|>";
 const NONVERBAL: &[&str] = &[
     "[laughter]",
     "[sigh]",
@@ -137,9 +136,24 @@ fn format_text(text: &str) -> String {
     formatted
 }
 
-pub(super) fn tokens(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u64>> {
+pub(super) fn tokens(
+    tokenizer: &Tokenizer,
+    text: &str,
+    instruct: Option<&str>,
+) -> Result<Vec<u64>> {
     let text = format_text(text);
     ensure!(!text.trim().is_empty(), "text must contain a spoken prompt");
+    let instruct = instruct.map(str::trim).unwrap_or("None");
+    ensure!(
+        !instruct.is_empty(),
+        "OmniVoice instruction must not be empty"
+    );
+    ensure!(
+        !instruct.contains("<|"),
+        "OmniVoice instruction contains a reserved control delimiter"
+    );
+    let style =
+        format!("<|lang_start|>None<|lang_end|><|instruct_start|>{instruct}<|instruct_end|>");
     let wrapped = format!("<|text_start|>{text}<|text_end|>");
     let mut result = Vec::new();
     let mut encode = |segment: &str, special| -> Result<()> {
@@ -151,7 +165,7 @@ pub(super) fn tokens(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u64>> {
         }
         Ok(())
     };
-    encode(STYLE, true)?;
+    encode(&style, true)?;
     let mut remaining = wrapped.as_str();
     let mut split = false;
     while let Some((index, tag)) = NONVERBAL
