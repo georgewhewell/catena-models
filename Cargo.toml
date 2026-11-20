@@ -22,6 +22,7 @@ libc = "0.2"
 libloading = "0.9"
 memmap2 = "0.9"
 metacat = "0.3.0"
+unicode_categories = "0.1"
 tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 safetensors = "0.7"
 serde = { version = "1", features = ["derive"] }
