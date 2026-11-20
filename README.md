@@ -267,6 +267,23 @@ the kernels skip model work. Rust reads the valid PCM and writes the
 WAV. `--timings` reports the combined synthesis time. The GPU sampler produces a
 different waveform for a given seed than the previous CPU sampler.
 
+## OmniVoice TTS
+
+```bash
+cargo run -r --bin omnivoice-tts -- --seed 0 --output speech.wav \
+  'This is a sentence without any voice prompt.'
+```
+
+OmniVoice uses `k2-fsa/OmniVoice` and its bundled Higgs audio decoder.
+Pass one text utterance of up to 30 seconds of estimated speech. HEX refines
+the masked audio codes and decodes them to mono 24 kHz audio in one invocation.
+Use `--timings` to report load and synthesis times.
+Set `CATENA_GPU_DIALECT=cuda` to run on NVIDIA GPUs with compute capability 8.0 or later.
+
+Use `--instruct "whisper"` for a documented English voice attribute, or try
+`--instruct "excited and happy"` for experimental emotion prompting. The
+effect of free-form directions varies with the prompt.
+
 ## MMS English TTS
 
 ```bash

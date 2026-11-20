@@ -1169,8 +1169,8 @@
  [.t1]
 ))
 
-(def program tts.conv-tile : {({({({((cap.own mem) val) ({((cap.ref mem) val) ((cap.ref mem) val)} *)} *) ({(u64 val) ({(u64 val) (u64 val)} *)} *)} *) ({({(u64 val) ({(u64 val) (u64 val)} *)} *) ({({(u64 val) (u64 val)} *) ({(u64 val) (u64 val)} *)} *)} *)} *) ({((cap.own mem) val) (u64 val)} *)} -> ({((cap.own mem) val) (u64 val)} *)
-= ([env state.]
+(def program tts.conv-tile : {(u64 val) ({({({((cap.own mem) val) ({((cap.ref mem) val) ((cap.ref mem) val)} *)} *) ({(u64 val) ({(u64 val) (u64 val)} *)} *)} *) ({({(u64 val) ({(u64 val) (u64 val)} *)} *) ({({(u64 val) (u64 val)} *) ({(u64 val) (u64 val)} *)} *)} *)} *) ({((cap.own mem) val) (u64 val)} *)} -> ({((cap.own mem) val) (u64 val)} *)
+= ([tile-rows env state.]
  ([.env] *.elim [envl envr.])
  ([.envl] *.elim [envll envlr.])
  ([.envll] *.elim [envlll envllr.])
@@ -1200,8 +1200,8 @@
  ([.statel] [output.])
  ([.stater] [offset.])
  ({[.rows] [.offset]} stdlib.models.memory.u64.sub [t1.])
- ({[.t1] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.less [t2.])
- ({[.t2] [.t1] (const.u64.0x0000000000000100)} stdlib.models.memory.select-u64 [t3.])
+ ({[.t1] [.tile-rows]} stdlib.models.memory.u64.less [t2.])
+ ({[.t2] [.t1] [.tile-rows]} stdlib.models.memory.select-u64 [t3.])
  ({[.ci] [.kernel]} stdlib.models.memory.u64.mul [t4.])
  ({[.t3] [.t4]} stdlib.models.memory.u64.mul [t5.])
  ({[.x] [.frames] [.ci] [.kernel] [.dilation] [.stride] [.pad] [.transpose] [.offset] [.t5]} tts.patch [t6.])
@@ -1267,8 +1267,8 @@
  [.nextstate]
 ))
 
-(def program tts.conv.fold : {({({({((cap.own mem) val) ({((cap.ref mem) val) ((cap.ref mem) val)} *)} *) ({(u64 val) ({(u64 val) (u64 val)} *)} *)} *) ({({(u64 val) ({(u64 val) (u64 val)} *)} *) ({({(u64 val) (u64 val)} *) ({(u64 val) (u64 val)} *)} *)} *)} *) ({({master.index32 u32} :) ({({((cap.own mem) val) (u64 val)} *) ({(({master.index32 master.end32} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({({((cap.own mem) val) (u64 val)} *) (prop.Truth |-)} *)
-= ([env pair.]
+(def program tts.conv.fold : {(u64 val) ({({({((cap.own mem) val) ({((cap.ref mem) val) ((cap.ref mem) val)} *)} *) ({(u64 val) ({(u64 val) (u64 val)} *)} *)} *) ({({(u64 val) ({(u64 val) (u64 val)} *)} *) ({({(u64 val) (u64 val)} *) ({(u64 val) (u64 val)} *)} *)} *)} *) ({({master.index32 u32} :) ({({((cap.own mem) val) (u64 val)} *) ({(({master.index32 master.end32} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({({((cap.own mem) val) (u64 val)} *) (prop.Truth |-)} *)
+= ([tile-rows env pair.]
  ([.pair] *.elim [pairl pairr.])
  ([.pairl] [step.])
  ([.pairr] [rest.])
@@ -1279,7 +1279,7 @@
  ([.proofsl] [less.])
  ([.proofsr] [truth.])
  ([.less] unsafe.discard unit.elim)
- ({[.env] [.state]} tts.conv-tile [t1.])
+ ({[.tile-rows] [.env] [.state]} tts.conv-tile [t1.])
  ({[.t1] [.truth]} *.intro [fold-result.])
  [.fold-result]
 ))
@@ -1303,6 +1303,11 @@
 
 (def program tts.conv : {((cap.own mem) val) ((cap.ref mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val)} -> ((cap.own mem) val)
 = ([x w bias frames rows ci co kernel dilation stride pad transpose use-bias.]
+ ({[.x] [.w] [.bias] [.frames] [.rows] [.ci] [.co] [.kernel] [.dilation] [.stride] [.pad] [.transpose] [.use-bias] (const.u64.0x0000000000000100)} tts.conv-tiled)
+))
+
+(def program tts.conv-tiled : {((cap.own mem) val) ((cap.ref mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val) (u64 val)} -> ((cap.own mem) val)
+= ([x w bias frames rows ci co kernel dilation stride pad transpose use-bias tile-rows.]
  ({[.rows] [.co]} stdlib.models.memory.u64.mul [t1.])
  ([.t1] stdlib.qwen3.state-zero-bf16 [t2.])
  ({[.w] [.bias]} *.intro [envllr.])
@@ -1318,9 +1323,10 @@
  ({[.envrl] [.envrr]} *.intro [envr.])
  ({[.envl] [.envr]} *.intro [env.])
  ({[.t2] (const.u64.0x0000000000000000)} *.intro [state.])
- ({[.rows] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [t3.])
- ({[.t3] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [t4.])
- ([.env] partial.tts.conv.fold.1 [t5.])
+ ({[.tile-rows] (const.u64.0x0000000000000001)} stdlib.models.memory.u64.sub [tile-overhang.])
+ ({[.rows] [.tile-overhang]} stdlib.models.memory.u64.add [t3.])
+ ({[.t3] [.tile-rows]} stdlib.models.memory.u64.div [t4.])
+ ({[.tile-rows] [.env]} partial.tts.conv.fold.2 [t5.])
  ([.t4] stdlib.models.memory.fold-count-u32 [t6.])
  ({[.t6] (unit.intro meta.master.end32)} smolcat.value.named_at [end.])
  ({[.end] [.state] [.t5] (core.truth)} core.fold.bounded [final proof.])

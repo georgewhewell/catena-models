@@ -4,6 +4,11 @@
 /nixos
 /profiles/
 /target/
+#ignore temp files, images, sounds used/generated while testing models
+,*
+*.wav
+*.png
+*.jpg
 
 # Python generator caches
 __pycache__/

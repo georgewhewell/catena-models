@@ -191,13 +191,13 @@ pub(crate) fn header(s: &mut String, name: &str, inputs: &[(&str, &str)], output
     .unwrap();
 }
 
-fn nested_product(types: &[String]) -> String {
+pub(crate) fn nested_product(types: &[String]) -> String {
     if types.len() == 1 {
         return types[0].clone();
     }
     format!("({{{} {}}} *)", types[0], nested_product(&types[1..]))
 }
-fn pack(s: &mut String, names: &[String], output: &str) {
+pub(crate) fn pack(s: &mut String, names: &[String], output: &str) {
     if names.len() == 1 {
         writeln!(s, "  ([.{}] [{}.] )", names[0], output).unwrap();
         return;
@@ -213,7 +213,7 @@ fn pack(s: &mut String, names: &[String], output: &str) {
         tail = next;
     }
 }
-fn unpack(s: &mut String, input: &str, names: &[String]) {
+pub(crate) fn unpack(s: &mut String, input: &str, names: &[String]) {
     if names.len() == 1 {
         writeln!(s, "  ([.{input}] [{}.] )", names[0]).unwrap();
         return;
@@ -229,7 +229,7 @@ fn unpack(s: &mut String, input: &str, names: &[String]) {
         tail = next;
     }
 }
-fn emit_layer_selector(s: &mut String, layers: usize, group: &str, weights: &str) {
+pub(crate) fn emit_layer_selector(s: &mut String, layers: usize, group: &str, weights: &str) {
     let pair = format!("({{{group} {group}}} *)");
     for (suffix, proof) in [
         ("yes", "((master.predicate prop.IsTrue) |-)"),
