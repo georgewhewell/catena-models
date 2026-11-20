@@ -1,0 +1,30 @@
+# Backbone projection dispatch. Graph assembly selects the wide tile for the GPU dialect.
+
+(def program stdlib.omnivoice.project.wide : {((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) (u64 val) ({(u64 val) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> ((cap.own mem) val) =
+ ([x weight ci co rows pair.]
+  ([.pair] *.elim [ignored proofs.])
+  ([.proofs] *.elim [proof unit.])
+  ([.proof] unsafe.discard unit.elim)
+  ([.unit] unit.elim)
+  ({[.x] [.weight] [.rows] [.ci] [.co]} stdlib.lfm3.wmma.{{WIDE_TILE}}.linear-or.native)
+ ))
+
+(def program stdlib.omnivoice.project.small : {((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val) ({(u64 val) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> ((cap.own mem) val) =
+ ([x weight ci co pair.]
+  ([.pair] *.elim [ignored proofs.])
+  ([.proofs] *.elim [proof unit.])
+  ([.proof] unsafe.discard unit.elim)
+  ([.unit] unit.elim)
+  ({[.x] [.weight] [.ci] [.co]} stdlib.qwen35.batch.wmma-project)
+ ))
+
+(def program stdlib.omnivoice.project : {((cap.own mem) val) ((cap.ref mem) val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
+ ([x weight ci co.]
+  ([.x] stdlib.models.memory.own-count-bf16 [elements.])
+  ({[.elements] [.ci]} stdlib.models.memory.u64.div [rows.])
+  ({[.rows] (const.u64.0x0000000000000080)} stdlib.models.memory.u64.less [small.])
+  ({[.small] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [condition.])
+  ({[.x] [.weight] [.ci] [.co]} partial.stdlib.omnivoice.project.small.4 [small-kernel.])
+  ({[.x] [.weight] [.ci] [.co] [.rows]} partial.stdlib.omnivoice.project.wide.5 [wide-kernel.])
+  ({[.condition] (const.u64.0x0000000000000000) [.small-kernel] [.wide-kernel] unit.intro} core.if)
+ ))
