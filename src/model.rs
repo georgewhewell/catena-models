@@ -737,6 +737,11 @@ fn read_logits(logits_output: MemOwn, vocabulary_size: usize) -> Result<Vec<f32>
         .into_iter()
         .map(|bits| f32::from_bits(u32::from(bits) << 16))
         .collect();
+    check_logits(&logits, vocabulary_size)?;
+    Ok(logits)
+}
+
+pub(crate) fn check_logits(logits: &[f32], vocabulary_size: usize) -> Result<()> {
     ensure!(
         logits.len() == vocabulary_size,
         "qwen3 returned {} logits, expected {vocabulary_size}",
@@ -746,7 +751,7 @@ fn read_logits(logits_output: MemOwn, vocabulary_size: usize) -> Result<Vec<f32>
         logits.iter().all(|value| value.is_finite()),
         "qwen3 returned non-finite logits"
     );
-    Ok(logits)
+    Ok(())
 }
 
 fn owned_state(values: Vec<Value<'_>>) -> Result<Vec<MemOwn>> {

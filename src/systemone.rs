@@ -43,6 +43,9 @@ impl Request {
     pub fn has_images(&self) -> bool {
         !self.images.is_empty()
     }
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
     pub fn parse(body: Value) -> Result<Self> {
         Self::parse_inner(body).map_err(|e| invalid(format!("{e:#}")))
     }
@@ -281,25 +284,39 @@ impl Metadata {
     }
 }
 
-/// Loaded once on the owning GPU thread; image encodings live for one request.
-pub struct Runner {
-    model: Model,
+/// One complete text-only decision prompt with its readout parameters.
+#[derive(Clone, Debug)]
+pub struct Prepared {
+    pub tokens: Vec<u64>,
+    /// Single-token forms of each option, in option order. Logits are max-pooled per group.
+    pub groups: Vec<Vec<u64>>,
+    pub temperature: f64,
+}
+
+/// CPU-only request preparation and logits readout. `Runner` executes the
+/// language model between the two; other callers may execute it elsewhere.
+///
+/// Text prompts need only the entries of
+/// `catena::generated_model_source_for_options`, called once per prepared
+/// prompt. d1 supports both prefill options; the CLI and server default to
+/// matrix cores (`with_wmma_prefill(true)`).
+///
+/// 1. `qwen3.init(capacity: u64)` returns the session state `{cache, history}`.
+///    The capacity is the prompt's token count.
+/// 2. `qwen3(tokens: u64[], cache, history, capacity: u64, start: u64 = 0,
+///    ...weights in spec::weight_specs order)` returns
+///    `{cache, history, logits, token}`. `logits` holds `vocabulary_size` BF16
+///    values, which `respond` takes widened to F32, and `token` is one u64.
+pub struct Decisions {
     tokenizer: QwenTokenizer,
-    vision: Option<VisionModel>,
     metadata: Metadata,
     environment: minijinja::Environment<'static>,
     controls: Vec<String>,
     limit: usize,
-    name: String,
+    vocabulary_size: usize,
 }
-impl Runner {
-    pub fn load(
-        path: &Path,
-        projector: Option<&Path>,
-        options: InferenceOptions,
-        limit: usize,
-        name: String,
-    ) -> Result<Self> {
+impl Decisions {
+    pub fn read(path: &Path, limit: usize) -> Result<Self> {
         let metadata = Metadata::read(path)?.context("this model does not support decisions")?;
         let tokenizer = QwenTokenizer::from_gguf(path)?.context("missing tokenizer")?;
         let mut environment = template_environment();
@@ -310,6 +327,119 @@ impl Runner {
         let config = read_gguf_model_config(path)?;
         let limit = limit.min(config.max_position_embeddings);
         ensure!(limit > 0, "context size must be positive");
+        Ok(Self {
+            tokenizer,
+            metadata,
+            environment,
+            controls,
+            limit,
+            vocabulary_size: config.vocabulary_size,
+        })
+    }
+    /// One prompt per question, in request order. Images need `Runner`.
+    pub fn prepare(&self, request: &Request) -> Result<Vec<Prepared>> {
+        if request.has_images() {
+            return Err(invalid("images are unsupported without an image projector"));
+        }
+        Ok(request
+            .questions
+            .iter()
+            .zip(self.prompts(request, &[])?)
+            .map(|(q, (prompt, groups))| Prepared {
+                tokens: prompt.tokens,
+                groups,
+                temperature: self.metadata.temperature(q, false),
+            })
+            .collect())
+    }
+    /// `logits[i]` holds the vocabulary logits the model returned for `prepared[i]`.
+    pub fn respond(
+        &self,
+        model: &str,
+        request: &Request,
+        prepared: &[Prepared],
+        logits: &[Vec<f32>],
+    ) -> Result<Value> {
+        ensure!(
+            prepared.len() == request.questions.len() && logits.len() == prepared.len(),
+            "decision count mismatch"
+        );
+        let mut answers = Map::new();
+        let mut input_tokens = 0usize;
+        for ((q, prepared), logits) in request.questions.iter().zip(prepared).zip(logits) {
+            crate::model::check_logits(logits, self.vocabulary_size)?;
+            input_tokens = input_tokens
+                .checked_add(prepared.tokens.len())
+                .context("usage overflow")?;
+            answers.insert(
+                q.name.clone(),
+                readout(q, &prepared.groups, logits, prepared.temperature)?,
+            );
+        }
+        Ok(envelope(model, answers, input_tokens))
+    }
+    // Validate every expanded prompt before running the language model.
+    fn prompts(
+        &self,
+        request: &Request,
+        images: &[Rc<ImageEmbedding>],
+    ) -> Result<Vec<(PreparedMultimodalPrompt, Vec<Vec<u64>>)>> {
+        request
+            .questions
+            .iter()
+            .map(|q| {
+                let (rendered, groups) = render(
+                    &self.environment,
+                    &self.tokenizer,
+                    &self.controls,
+                    &request.state,
+                    q,
+                    images.len(),
+                )?;
+                let prompt =
+                    PreparedMultimodalPrompt::from_rendered(&self.tokenizer, &rendered, images)?;
+                ensure!(
+                    !prompt.tokens().is_empty() && prompt.tokens().len() <= self.limit,
+                    "expanded decision prompt exceeds context limit {}",
+                    self.limit
+                );
+                Ok((prompt, groups))
+            })
+            .collect::<Result<Vec<_>>>()
+            .map_err(invalid)
+    }
+}
+fn readout(q: &Question, groups: &[Vec<u64>], logits: &[f32], temperature: f64) -> Result<Value> {
+    let scores = groups
+        .iter()
+        .map(|g| {
+            g.iter()
+                .map(|&id| logits[id as usize] as f64)
+                .fold(f64::NEG_INFINITY, f64::max)
+        })
+        .collect::<Vec<_>>();
+    answer(q, &scores, temperature)
+}
+fn envelope(model: &str, answers: Map<String, Value>, input_tokens: usize) -> Value {
+    json!({"model":model,"answers":answers,"usage":{"input_tokens":input_tokens,"output_tokens":0}})
+}
+
+/// Loaded once on the owning GPU thread; image encodings live for one request.
+pub struct Runner {
+    model: Model,
+    vision: Option<VisionModel>,
+    decisions: Decisions,
+    name: String,
+}
+impl Runner {
+    pub fn load(
+        path: &Path,
+        projector: Option<&Path>,
+        options: InferenceOptions,
+        limit: usize,
+        name: String,
+    ) -> Result<Self> {
+        let decisions = Decisions::read(path, limit)?;
         let model = if projector.is_some() {
             Model::load_gguf_with_multimodal_options(path, options)?
         } else {
@@ -321,18 +451,14 @@ impl Runner {
         if let Some(vision) = &vision {
             ensure!(
                 vision.config().kind == crate::vision::VisionKind::Lfm3
-                    && vision.config().output_size == config.hidden_size,
+                    && vision.config().output_size == model.config().hidden_size,
                 "projector does not match LFM3 model"
             );
         }
         Ok(Self {
             model,
-            tokenizer,
             vision,
-            metadata,
-            environment,
-            controls,
-            limit,
+            decisions,
             name,
         })
     }
@@ -361,23 +487,7 @@ impl Runner {
                 images.push(Rc::new(vision.encode_patches(&patches)?));
             }
         }
-        // Validate every expanded prompt before running the language model.
-        let prepared = request
-            .questions
-            .iter()
-            .map(|q| {
-                let (rendered, groups) = self.render(&request.state, q, images.len())?;
-                let prompt =
-                    PreparedMultimodalPrompt::from_rendered(&self.tokenizer, &rendered, &images)?;
-                ensure!(
-                    !prompt.tokens().is_empty() && prompt.tokens().len() <= self.limit,
-                    "expanded decision prompt exceeds context limit {}",
-                    self.limit
-                );
-                Ok((prompt, groups))
-            })
-            .collect::<Result<Vec<_>>>()
-            .map_err(invalid)?;
+        let prepared = self.decisions.prompts(request, &images)?;
         let mut answers = Map::new();
         let mut input_tokens = 0usize;
         for (q, (prompt, groups)) in request.questions.iter().zip(prepared) {
@@ -391,37 +501,10 @@ impl Runner {
             } else {
                 session.prefill_multimodal_logits(&prompt)?
             };
-            let scores = groups
-                .iter()
-                .map(|g| {
-                    g.iter()
-                        .map(|&id| logits[id as usize] as f64)
-                        .fold(f64::NEG_INFINITY, f64::max)
-                })
-                .collect::<Vec<_>>();
-            answers.insert(
-                q.name.clone(),
-                answer(q, &scores, self.metadata.temperature(q, !images.is_empty()))?,
-            );
+            let temperature = self.decisions.metadata.temperature(q, !images.is_empty());
+            answers.insert(q.name.clone(), readout(q, &groups, &logits, temperature)?);
         }
-        Ok(
-            json!({"model":self.name,"answers":answers,"usage":{"input_tokens":input_tokens,"output_tokens":0}}),
-        )
-    }
-    fn render(
-        &self,
-        state: &Value,
-        q: &Question,
-        images: usize,
-    ) -> Result<(String, Vec<Vec<u64>>)> {
-        render(
-            &self.environment,
-            &self.tokenizer,
-            &self.controls,
-            state,
-            q,
-            images,
-        )
+        Ok(envelope(&self.name, answers, input_tokens))
     }
 }
 // llama.cpp's tojson uses Python separators and does not HTML-escape model input.
@@ -687,6 +770,18 @@ mod tests {
         }
         Ok(())
     }
+    fn image_request() -> Result<Request> {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.write_header()?.write_image_data(&[255, 0, 0])?;
+        }
+        let image = format!("data:image/png;base64,{}", STANDARD.encode(bytes));
+        let mut request = sample();
+        request["state"] = json!({"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":image}},{"type":"text","text":"hello"}]}]});
+        Request::parse(request)
+    }
     #[test]
     fn media_validation_and_escaping() -> Result<()> {
         let controls = vec!["<|im_end|>".into(), "<|image|>".into()];
@@ -697,17 +792,9 @@ mod tests {
         let mut request = sample();
         request["images"] = json!(["https://example.com/photo.png"]);
         assert!(Request::parse(request).is_err());
-        let mut bytes = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
-            encoder.set_color(png::ColorType::Rgb);
-            encoder.write_header()?.write_image_data(&[255, 0, 0])?;
-        }
-        let image = format!("data:image/png;base64,{}", STANDARD.encode(bytes));
-        let mut request = sample();
-        request["state"] = json!({"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":image}},{"type":"text","text":"hello"}]}]});
-        let request = Request::parse(request)?;
+        let request = image_request()?;
         assert!(request.has_images());
+        assert_eq!(request.model(), None);
         assert_eq!(
             request.state["messages"][0]["content"]
                 .as_array()
@@ -776,6 +863,43 @@ mod tests {
             "<|startoftext|><|im_start|>user\nI was charged twice.\n\n\nQUESTION:\nRefund requested?\n\nReply with yes or no only.<|im_end|>\n<|im_start|>assistant\n<think></think>"
         );
         assert_eq!(groups.len(), 2);
+        let decisions = Decisions::read(&path, 8192)?;
+        let prepared = decisions.prepare(&request)?;
+        assert_eq!(prepared.len(), 3);
+        assert_eq!(
+            prepared[0].tokens,
+            tokenizer.encode_without_special_tokens(&prompt)?
+        );
+        assert_eq!(prepared[0].groups, groups);
+        let vocabulary = read_gguf_model_config(&path)?.vocabulary_size;
+        let mut logits = vec![vec![0f32; vocabulary]; 3];
+        logits[0][groups[0][1] as usize] = 2.;
+        let response = decisions.respond("d1", &request, &prepared, &logits)?;
+        assert_eq!(response["model"], "d1");
+        assert_eq!(
+            response["usage"],
+            json!({"input_tokens": prepared.iter().map(|p| p.tokens.len()).sum::<usize>(), "output_tokens": 0})
+        );
+        let expected = answer(&request.questions[0], &[2., 0.], prepared[0].temperature)?;
+        assert_eq!(response["answers"]["refund"], expected);
+        assert_eq!(response["answers"]["urgency"]["type"], "score");
+        logits[1][0] = f32::NAN;
+        assert!(
+            decisions
+                .respond("d1", &request, &prepared, &logits)
+                .is_err()
+        );
+        logits[1].pop();
+        assert!(
+            decisions
+                .respond("d1", &request, &prepared, &logits)
+                .is_err()
+        );
+        let error = decisions.prepare(&image_request()?).unwrap_err();
+        assert!(error.is::<InvalidRequest>());
+        let mut tiny = Decisions::read(&path, 8192)?;
+        tiny.limit = 4;
+        assert!(tiny.prepare(&request).unwrap_err().is::<InvalidRequest>());
         let mut many = request.questions[1].clone();
         many.options = (0..40).map(|i| (format!("opt{i}"), Value::Null)).collect();
         let (labels, groups) = label_groups(&tokenizer, &many)?;
