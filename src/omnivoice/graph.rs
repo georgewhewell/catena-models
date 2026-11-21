@@ -10,17 +10,19 @@ const PREFIX: &str = "stdlib.omnivoice.";
 const FREE_BF16: &str = "stdlib.models.resources.free-bf16-before";
 const FREE: &str = "stdlib.models.resources.free-f32-before";
 const CONV: &str = "acoustic_decoder";
-pub(super) const STRIDES: [usize; 5] = [8, 5, 4, 2, 3];
+pub const STRIDES: [usize; 5] = [8, 5, 4, 2, 3];
 pub(super) const DILATIONS: [usize; 3] = [1, 3, 9];
 
+/// Device storage of a codec tensor. Transposed convolutions are BF16 after
+/// `transposed_conv` packing.
 #[derive(Clone, Copy)]
-pub(super) enum Packing {
+pub enum Packing {
     Bf16,
     F32,
     TransposedConv,
 }
 
-pub(super) struct Tensor {
+pub struct Tensor {
     pub name: String,
     pub shape: Vec<usize>,
     pub packing: Packing,
@@ -678,7 +680,13 @@ fn pack_layers(source: &mut String, layer_names: &[String]) {
     qwen::pack(source, &groups, "weights");
 }
 
-pub(super) fn build(
+/// The OmniVoice Hex bundle for one GPU dialect and its codec tensors in
+/// argument order; the receiver supplies only Catena's core stdlib.
+///
+/// `omnivoice.synthesize(text: u64[], prefix: u64, frames: u64, seed: u64,
+/// ...model_bindings, ...quantizers, ...codec tensors)` returns
+/// `waveform_samples(frames)` F32 samples. `prefix` is the text token count.
+pub fn build(
     config: &ModelConfig,
     diagnostics: bool,
     dialect: GpuDialect,

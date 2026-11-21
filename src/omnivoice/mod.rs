@@ -1,6 +1,6 @@
 //! Text-only k2-fsa/OmniVoice synthesis with the bundled Higgs audio decoder.
-mod graph;
-mod prompt;
+pub mod graph;
+pub mod prompt;
 
 use crate::{
     catena, hfhub, model,
@@ -16,10 +16,10 @@ use std::path::Path;
 use tokenizers::Tokenizer;
 
 pub const DEFAULT_MODEL: &str = "k2-fsa/OmniVoice";
-const SAMPLE_RATE: u32 = 24_000;
-const FRAME_SAMPLES: usize = 960;
-const MAX_FRAMES: usize = 30 * SAMPLE_RATE as usize / FRAME_SAMPLES;
-const FILES: &[&str] = &[
+pub const SAMPLE_RATE: u32 = 24_000;
+pub const FRAME_SAMPLES: usize = 960;
+pub const MAX_FRAMES: usize = 30 * SAMPLE_RATE as usize / FRAME_SAMPLES;
+pub const FILES: &[&str] = &[
     "config.json",
     "tokenizer.json",
     "model.safetensors",
@@ -78,24 +78,15 @@ impl OmniVoice {
         codec.prepare(&runtime, &codec_names(false), false)?;
         for tensor in &codec_weights {
             if let Packing::TransposedConv = tensor.packing {
-                let [input, output, taps] = *tensor.shape.as_slice() else {
-                    unreachable!("transposed-convolution dimensions")
-                };
-                let data = codec.host_f32(&tensor.name)?;
-                let mut packed = Vec::with_capacity(data.len());
-                for co in 0..output {
-                    for ci in 0..input {
-                        let start = (ci * output + co) * taps;
-                        packed.extend_from_slice(&data[start..start + taps]);
-                    }
-                }
+                let packed = transposed_conv(&codec, tensor)?;
                 codec.insert_prepared(&tensor.name, runtime.mem_u16(&bf16(&packed))?)?;
             }
         }
+        let [embeddings, projections, biases] = quantizers(&codec)?;
         let quantizer = [
-            prepare_quantizer(&runtime, &codec, "codebook.embed", &[1024, 64])?,
-            prepare_quantizer(&runtime, &codec, "project_out.weight", &[1024, 64])?,
-            prepare_quantizer(&runtime, &codec, "project_out.bias", &[1024])?,
+            runtime.mem_f32(&embeddings)?,
+            runtime.mem_f32(&projections)?,
+            runtime.mem_f32(&biases)?,
         ];
         Ok(Self {
             runtime,
@@ -123,19 +114,7 @@ impl OmniVoice {
         seed: u64,
         instruct: Option<&str>,
     ) -> Result<Audio> {
-        let tokens = prompt::tokens(&self.tokenizer, text, instruct)?;
-        let frames = prompt::duration_frames(text);
-        ensure!(
-            frames <= MAX_FRAMES,
-            "OmniVoice supports up to 30 seconds per utterance"
-        );
-        ensure!(
-            tokens.len() + frames <= self.config.max_position_embeddings
-                && tokens
-                    .iter()
-                    .all(|&id| id < self.config.vocabulary_size as u64),
-            "OmniVoice prompt exceeds the checkpoint's context or vocabulary"
-        );
+        let (tokens, frames) = prepare(&self.tokenizer, &self.config, text, instruct)?;
         let text = self.runtime.mem_u64(&tokens)?;
         let mut args = vec![
             text.as_ref().into(),
@@ -150,8 +129,7 @@ impl OmniVoice {
         let wave = self.execute("omnivoice.synthesize", args)?;
         let samples = wave.try_to_f32_vec()?;
         ensure!(
-            samples.len() == frames * FRAME_SAMPLES + SAMPLE_RATE as usize / 5
-                && samples.iter().all(|x| x.is_finite()),
+            samples.len() == waveform_samples(frames) && samples.iter().all(|x| x.is_finite()),
             "OmniVoice returned an invalid waveform"
         );
         Ok(Audio {
@@ -181,7 +159,34 @@ impl OmniVoice {
     }
 }
 
-fn config(directory: &Path) -> Result<ModelConfig> {
+/// Prompt tokens and the frame count of one utterance, checked against the checkpoint.
+pub fn prepare(
+    tokenizer: &Tokenizer,
+    config: &ModelConfig,
+    text: &str,
+    instruct: Option<&str>,
+) -> Result<(Vec<u64>, usize)> {
+    let tokens = prompt::tokens(tokenizer, text, instruct)?;
+    let frames = prompt::duration_frames(text);
+    ensure!(
+        frames <= MAX_FRAMES,
+        "OmniVoice supports up to 30 seconds per utterance"
+    );
+    ensure!(
+        tokens.len() + frames <= config.max_position_embeddings
+            && tokens.iter().all(|&id| id < config.vocabulary_size as u64),
+        "OmniVoice prompt exceeds the checkpoint's context or vocabulary"
+    );
+    Ok((tokens, frames))
+}
+
+/// The F32 sample count `omnivoice.synthesize` returns for a frame count.
+pub fn waveform_samples(frames: usize) -> usize {
+    frames * FRAME_SAMPLES + SAMPLE_RATE as usize / 5
+}
+
+/// Validate the model and codec configuration files of a snapshot directory.
+pub fn config(directory: &Path) -> Result<ModelConfig> {
     let model: Json = hfhub::read_json(directory.join("config.json"))?;
     let codec: Json = hfhub::read_json(directory.join("audio_tokenizer/config.json"))?;
     let mut qwen = ModelConfig::qwen3_0_6b();
@@ -269,7 +274,9 @@ fn config(directory: &Path) -> Result<ModelConfig> {
     Ok(qwen)
 }
 
-fn model_bindings(
+/// The model tensors `omnivoice.synthesize` takes after its scalars, in order,
+/// followed by the subsets stored as F32 and as BF16.
+pub fn model_bindings(
     config: &ModelConfig,
     weights: &Weights,
 ) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
@@ -306,25 +313,89 @@ fn model_bindings(
     Ok((names, f32_names, bf16_names))
 }
 
-fn prepare_quantizer(
-    runtime: &Runtime,
-    weights: &Weights,
-    suffix: &str,
-    shape: &[usize],
-) -> Result<MemOwn> {
+/// A transposed-convolution codec tensor as `[out, in, taps]`, before BF16 rounding.
+pub fn transposed_conv(codec: &Weights, tensor: &Tensor) -> Result<Vec<f32>> {
+    let [input, output, taps] = *tensor.shape.as_slice() else {
+        unreachable!("transposed-convolution dimensions")
+    };
+    let data = codec.host_f32(&tensor.name)?;
+    let mut packed = Vec::with_capacity(data.len());
+    for co in 0..output {
+        for ci in 0..input {
+            let start = (ci * output + co) * taps;
+            packed.extend_from_slice(&data[start..start + taps]);
+        }
+    }
+    Ok(packed)
+}
+
+/// The F32 embeddings, projections and biases of the eight codebooks, which
+/// `omnivoice.synthesize` takes between the model and codec tensors.
+pub fn quantizers(codec: &Weights) -> Result<[Vec<f32>; 3]> {
+    Ok([
+        quantizer(codec, "codebook.embed", &[1024, 64])?,
+        quantizer(codec, "project_out.weight", &[1024, 64])?,
+        quantizer(codec, "project_out.bias", &[1024])?,
+    ])
+}
+
+fn quantizer(weights: &Weights, suffix: &str, shape: &[usize]) -> Result<Vec<f32>> {
     let mut values = Vec::with_capacity(8 * shape.iter().product::<usize>());
     for codebook in 0..8 {
         let name = format!("quantizer.quantizers.{codebook}.{suffix}");
         weights.validate(&name, shape)?;
         values.extend(weights.host_f32(&name)?);
     }
-    Ok(runtime.mem_f32(&values)?)
+    Ok(values)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use catena_lang::runtime::GpuDialect;
+
+    #[test]
+    fn synthesize_signature_matches_bindings() -> Result<()> {
+        let config = ModelConfig::qwen3_0_6b();
+        for dialect in [GpuDialect::Hip, GpuDialect::Cuda] {
+            let (source, codec) = graph::build(&config, false, dialect);
+            let signature = source
+                .lines()
+                .find(|line| line.starts_with("(def program omnivoice.synthesize "))
+                .and_then(|line| line.split(" -> ").next())
+                .context("missing entry")?;
+            // Text, model tensors, quantizers and codec tensors.
+            assert_eq!(
+                signature.matches("((cap.ref mem) val)").count(),
+                1 + 4 + config.num_layers * 11 + 3 + codec.len()
+            );
+            assert_eq!(signature.matches("(u64 val)").count(), 3);
+        }
+        assert_eq!(waveform_samples(67), 69_120);
+        Ok(())
+    }
+
+    #[test]
+    fn transposed_convolutions_pack_output_channels_first() -> Result<()> {
+        let path =
+            std::env::temp_dir().join(format!("omnivoice-{}.safetensors", std::process::id()));
+        let data: Vec<u8> = (0..12).flat_map(|i| (i as f32).to_le_bytes()).collect();
+        let view =
+            safetensors::tensor::TensorView::new(safetensors::Dtype::F32, vec![3, 2, 2], &data)?;
+        safetensors::serialize_to_file([("up", view)], None, &path)?;
+        let weights = Weights::open(&path)?;
+        std::fs::remove_file(&path)?;
+        let tensor = Tensor {
+            name: "up".into(),
+            shape: vec![3, 2, 2],
+            packing: Packing::TransposedConv,
+        };
+        assert_eq!(
+            transposed_conv(&weights, &tensor)?,
+            [0., 1., 4., 5., 8., 9., 2., 3., 6., 7., 10., 11.]
+        );
+        Ok(())
+    }
 
     #[test]
     #[ignore = "compiles the full OmniVoice graph for HIP and CUDA"]

@@ -58,7 +58,7 @@ const SCRIPT_WEIGHTS: &[(u32, f64)] = &[
     (0xFFEF, 1.0),
 ];
 
-pub(super) fn duration_frames(text: &str) -> usize {
+pub fn duration_frames(text: &str) -> usize {
     let speed = weight("Nice to meet you.") / 25.0;
     let estimate = weight(text) / speed;
     let boosted = if estimate < 50.0 {
@@ -136,11 +136,7 @@ fn format_text(text: &str) -> String {
     formatted
 }
 
-pub(super) fn tokens(
-    tokenizer: &Tokenizer,
-    text: &str,
-    instruct: Option<&str>,
-) -> Result<Vec<u64>> {
+pub fn tokens(tokenizer: &Tokenizer, text: &str, instruct: Option<&str>) -> Result<Vec<u64>> {
     let text = format_text(text);
     ensure!(!text.trim().is_empty(), "text must contain a spoken prompt");
     let instruct = instruct.map(str::trim).unwrap_or("None");
