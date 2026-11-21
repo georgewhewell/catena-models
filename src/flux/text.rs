@@ -50,6 +50,37 @@ pub fn tokenize(snapshot: &Path, prompt: &str) -> Result<PromptTokens> {
     ids.resize(SEQUENCE, 151643);
     Ok(PromptTokens { ids, valid })
 }
+/// The checkpoint tensors of `flux.encode-text` in argument order, with their
+/// shapes. Norm weights are stored as F32 and the rest as BF16.
+pub fn weight_shapes(config: &crate::spec::ModelConfig) -> Vec<(String, Vec<usize>)> {
+    let h = config.hidden_size;
+    let q = config.num_attention_heads * config.head_dim;
+    let kv = config.num_key_value_heads * config.head_dim;
+    let ff = config.intermediate_size;
+    let shapes = vec![
+        vec![h],
+        vec![q, h],
+        vec![kv, h],
+        vec![kv, h],
+        vec![h, q],
+        vec![config.head_dim],
+        vec![config.head_dim],
+        vec![h],
+        vec![ff, h],
+        vec![ff, h],
+        vec![h, ff],
+    ];
+    let mut tensors = vec![(
+        "model.embed_tokens.weight".to_owned(),
+        vec![config.vocabulary_size, h],
+    )];
+    for layer in 0..27 {
+        for (suffix, shape) in LAYER_NAMES.iter().zip(&shapes) {
+            tensors.push((format!("model.layers.{layer}.{suffix}"), shape.clone()));
+        }
+    }
+    tensors
+}
 pub struct TextEncoder {
     pub ops: Ops,
     weights: Weights,
@@ -66,31 +97,11 @@ impl TextEncoder {
         let config = tc.qwen()?;
         let mut weights =
             Weights::open(&snapshot.join("text_encoder/model.safetensors.index.json"))?;
-        let mut names = vec!["model.embed_tokens.weight".to_owned()];
-        weights.validate(&names[0], &[config.vocabulary_size, config.hidden_size])?;
         let h = config.hidden_size;
-        let q = config.num_attention_heads * config.head_dim;
-        let kv = config.num_key_value_heads * config.head_dim;
-        let ff = config.intermediate_size;
-        let shapes = vec![
-            vec![h],
-            vec![q, h],
-            vec![kv, h],
-            vec![kv, h],
-            vec![h, q],
-            vec![config.head_dim],
-            vec![config.head_dim],
-            vec![h],
-            vec![ff, h],
-            vec![ff, h],
-            vec![h, ff],
-        ];
-        for layer in 0..27 {
-            for (suffix, shape) in LAYER_NAMES.iter().zip(&shapes) {
-                let name = format!("model.layers.{layer}.{suffix}");
-                weights.validate(&name, shape)?;
-                names.push(name);
-            }
+        let mut names = Vec::new();
+        for (name, shape) in weight_shapes(&config) {
+            weights.validate(&name, &shape)?;
+            names.push(name);
         }
         let source_start = std::time::Instant::now();
         let source = generated_source_with_debug(&config, debug)?;
