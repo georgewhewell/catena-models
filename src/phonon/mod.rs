@@ -17,18 +17,33 @@ pub use crate::tts::Audio;
 
 pub const DEFAULT_MODEL: &str = "gradium/phonon-31m-en";
 pub const DEFAULT_VOICE: &str = "Easton";
-const CODEC: &str = "gradium/phonon-mimi";
-const VOICE_REPO: &str = "gradium/phonon-voices";
-const VOICE_CATALOG: &str = "voices.jsonl";
-const TOKENIZER: &str = "tokenizer.5.0.0.json";
+pub const CODEC: &str = "gradium/phonon-mimi";
+pub const VOICE_REPO: &str = "gradium/phonon-voices";
+pub const VOICE_CATALOG: &str = "voices.jsonl";
+pub const TOKENIZER: &str = "tokenizer.5.0.0.json";
+/// Checkpoint files read from the model and codec repositories.
+pub const MODEL_FILES: [&str; 5] = [
+    "config.json",
+    "generation_config.json",
+    "processor_config.json",
+    TOKENIZER,
+    "model.safetensors",
+];
+pub const CODEC_FILES: [&str; 2] = ["config.json", "model.safetensors"];
+/// Model tensors passed to `phonon.synthesize` as BF16, besides its bindings.
+pub const LATENT_STD: &str = "flow_lm.emb_std";
+pub const LATENT_MEAN: &str = "flow_lm.emb_mean";
 const HIDDEN: usize = 512;
 const LATENT: usize = 32;
-const CONTEXT: usize = 8192;
-const SAMPLE_RATE: u32 = 24_000;
-const UTTERANCE_TOKENS: usize = 50;
-const PAUSE_SAMPLES: usize = SAMPLE_RATE as usize * 120 / 1000;
+pub const CONTEXT: usize = 8192;
+pub const SAMPLE_RATE: u32 = 24_000;
+/// Longer text is split into utterances of at most this many tokens.
+pub const UTTERANCE_TOKENS: usize = 50;
+/// Silence between consecutive utterances.
+pub const PAUSE_SAMPLES: usize = SAMPLE_RATE as usize * 120 / 1000;
 
-struct Backbone {
+/// Validated model and codec configuration: the supported backbone depth.
+pub struct Config {
     layers: u64,
     source: &'static str,
 }
@@ -61,7 +76,8 @@ impl std::fmt::Display for UnknownVoice {
 
 impl std::error::Error for UnknownVoice {}
 
-fn voice_filename(catalog: &str, name: &str) -> Result<String> {
+/// The checkpoint filename of a voice in the `VOICE_CATALOG` text.
+pub fn voice_filename(catalog: &str, name: &str) -> Result<String> {
     let mut filename = None;
     for (index, line) in catalog.lines().enumerate() {
         if line.trim().is_empty() {
@@ -101,27 +117,21 @@ fn resolve_voice(name: &str) -> Result<PathBuf> {
 impl Assets {
     fn resolve(model: &str, voice: &str) -> Result<Self> {
         let voice = resolve_voice(voice)?;
-        let model = hfhub::resolve_model_files(
-            model,
-            &[
-                "config.json",
-                "generation_config.json",
-                "processor_config.json",
-                TOKENIZER,
-                "model.safetensors",
-            ],
-        )?;
-        let codec = hfhub::resolve_model_files(CODEC, &["config.json", "model.safetensors"])?;
+        let model = hfhub::resolve_model_files(model, &MODEL_FILES)?;
+        let codec = hfhub::resolve_model_files(CODEC, &CODEC_FILES)?;
         Ok(Self {
             model,
             codec,
             voice,
         })
     }
+}
 
-    fn validate(&self) -> Result<Backbone> {
+impl Config {
+    /// Read and validate the model and codec snapshot directories.
+    pub fn read(model: &Path, codec: &Path) -> Result<Self> {
         use serde_json::{Value, json};
-        let path = self.model.join("config.json");
+        let path = model.join("config.json");
         let config: Value = hfhub::read_json(&path)?;
         let (layers, source) = match config["num_hidden_layers"].as_u64() {
             Some(6) => (6, include_str!("../catena/phonon-6.hex")),
@@ -153,14 +163,14 @@ impl Assets {
             "",
         ).with_context(|| path.display().to_string())?;
         check_config(
-            self.model.join("generation_config.json"),
+            model.join("generation_config.json"),
             json!({
                 "do_sample": true, "eos_threshold": 4.0, "min_frames_before_eos": 0,
                 "num_flow_steps": 1, "temperature": 0.3,
             }),
         )?;
         check_config(
-            self.model.join("processor_config.json"),
+            model.join("processor_config.json"),
             json!({
                 "audio_tokenizer": {"audio_tokenizer_name_or_path": CODEC},
                 "frames_after_eos": 1, "frames_after_eos_short_text": 3, "short_text_max_words": 4,
@@ -168,7 +178,7 @@ impl Assets {
             }),
         )?;
         check_config(
-            self.codec.join("config.json"),
+            codec.join("config.json"),
             json!({
                 "model_type": "pocket_tts_audio_tokenizer", "audio_channels": 1, "latent_dim": LATENT,
                 "sampling_rate": SAMPLE_RATE, "latent_stride": 16, "upsample_groups": HIDDEN,
@@ -181,7 +191,7 @@ impl Assets {
                 "compress": 2, "use_conv_shortcut": false, "kernel_size": 7, "last_kernel_size": 3,
             }),
         )?;
-        Ok(Backbone { layers, source })
+        Ok(Self { layers, source })
     }
 }
 
@@ -213,7 +223,21 @@ fn check_config_fields(
     Ok(())
 }
 
-fn bundle(backbone_source: &str) -> String {
+/// Complete Hex bundle exporting `phonon.setup` and `phonon.synthesize`; the
+/// receiver supplies only Catena's core stdlib (`catena::runtime_sources`).
+///
+/// `phonon.setup(voice: bf16[frames * 512], frames: u64, ...bindings)` returns
+/// `{voice, cond, bos, time, text_limit: u64}`. The first four are BF16 buffers
+/// to pass back unchanged, and can be reused for every utterance of the voice.
+/// `text_limit` is `(max((8191 - frames) * 6, 150) - 150) / 31` and must be
+/// positive.
+///
+/// `phonon.synthesize(ids: u64[], voice, bos, cond, time, zero: f32[2048],
+/// LATENT_STD: bf16[32], LATENT_MEAN: bf16[32], frames: u64, tokens: u64,
+/// words: u64, seed: u64, utterance: u64, ...bindings)` returns
+/// `{waveform, descriptor}`: see `decode_utterance`. The waveform holds up to
+/// `((tokens + 6) * 25 + 5) / 6` frames of 1920 F32 samples.
+pub fn bundle(config: &Config) -> String {
     let mut source = include_str!("../catena/memory.hex").to_owned();
     for fragment in [
         include_str!("../catena/numeric.hex"),
@@ -222,32 +246,66 @@ fn bundle(backbone_source: &str) -> String {
         include_str!("../catena/bf16_simt.hex"),
         include_str!("../catena/whisper.hex"),
         include_str!("../catena/phonon.hex"),
-        backbone_source,
+        config.source,
     ] {
         crate::qwen::fused::append_hex(&mut source, fragment);
     }
     source.replace(" bf16x2.dot-f32 ", " stdlib.models.math.dot-pair-f32 ")
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
-enum Packing {
+pub enum Packing {
     Conv,
     Qkv,
     Transposed,
 }
 
-#[derive(Deserialize)]
-struct Binding {
-    names: Vec<String>,
-    shape: Vec<usize>,
-    packing: Option<Packing>,
+/// One weight argument: the named tensors of `shape`, concatenated and packed.
+#[derive(Debug, Deserialize)]
+pub struct Binding {
+    pub names: Vec<String>,
+    pub shape: Vec<usize>,
+    pub packing: Option<Packing>,
+    /// Read from the codec checkpoint and stored as F32. Model tensors are BF16.
     #[serde(default)]
-    codec: bool,
+    pub codec: bool,
+}
+
+/// The weight arguments that follow the inputs of `setup` or `synthesize`, in order.
+pub fn bindings(config: &Config, entry: &str) -> Result<Vec<Binding>> {
+    let key = match entry {
+        "setup" => "setup".to_owned(),
+        "synthesize" => format!("synthesize-{}", config.layers),
+        _ => bail!("unknown Phonon entry {entry}"),
+    };
+    serde_json::from_str::<Bindings>(include_str!("weights.json"))?
+        .remove(&key)
+        .with_context(|| format!("missing generated Phonon bindings for {key}"))
+}
+
+pub fn validate_weights(model: &Weights, codec: &Weights, config: &Config) -> Result<()> {
+    for entry in ["setup", "synthesize"] {
+        for binding in bindings(config, entry)? {
+            let weights = if binding.codec { codec } else { model };
+            for name in &binding.names {
+                weights.validate(name, &binding.shape)?;
+            }
+        }
+    }
+    for name in [LATENT_MEAN, LATENT_STD] {
+        model.validate(name, &[LATENT])?;
+    }
+    Ok(())
+}
+
+/// The values of one weight argument, before rounding model tensors to BF16.
+pub fn materialize(model: &Weights, codec: &Weights, binding: &Binding) -> Result<Vec<f32>> {
+    binding.values(if binding.codec { codec } else { model })
 }
 
 impl Binding {
-    fn upload_f32(&self, runtime: &Runtime, weights: &Weights) -> Result<MemOwn> {
+    fn values(&self, weights: &Weights) -> Result<Vec<f32>> {
         let mut values = Vec::new();
         for name in &self.names {
             values.extend(weights.host_f32(name)?);
@@ -282,84 +340,70 @@ impl Binding {
                     packed
                 }
             };
-            return Ok(runtime.mem_f32(&packed)?);
+            return Ok(packed);
         }
-        Ok(runtime.mem_f32(&values)?)
+        Ok(values)
     }
 }
 
 type Bindings = BTreeMap<String, Vec<Binding>>;
 
+/// A voice's `speaker_wavs` values, `[1, 512, frames]` in checkpoint order.
+/// `phonon.setup` takes them rounded to BF16.
+pub struct Voice {
+    pub values: Vec<f32>,
+    pub frames: usize,
+}
+
+pub fn read_voice(path: &Path) -> Result<Voice> {
+    let voice = Weights::open(path)?;
+    let voice_tensor = voice
+        .tensors
+        .get("speaker_wavs")
+        .context("voice is missing speaker_wavs")?;
+    let [1, HIDDEN, frames] = voice_tensor.shape.as_slice() else {
+        bail!("expected speaker_wavs with shape [1, {HIDDEN}, frames]");
+    };
+    let frames = *frames;
+    ensure!((1..CONTEXT).contains(&frames), "invalid voice frame count");
+    let values = voice.host_f32("speaker_wavs")?;
+    ensure!(
+        values.iter().all(|x| x.is_finite()),
+        "voice contains non-finite values"
+    );
+    Ok(Voice { values, frames })
+}
+
 struct Checkpoints {
     model: Weights,
     codec: Weights,
-    voice: Vec<f32>,
-    voice_frames: usize,
+    voice: Voice,
     bindings: Bindings,
 }
 
 impl Checkpoints {
-    fn load(assets: &Assets, layers: u64) -> Result<Self> {
+    fn load(assets: &Assets, config: &Config) -> Result<Self> {
         let model = Weights::open(&assets.model.join("model.safetensors"))?;
         let codec = Weights::open(&assets.codec.join("model.safetensors"))?;
-        let voice = Weights::open(&assets.voice)?;
-        let voice_tensor = voice
-            .tensors
-            .get("speaker_wavs")
-            .context("voice is missing speaker_wavs")?;
-        let [1, HIDDEN, voice_frames] = voice_tensor.shape.as_slice() else {
-            bail!("expected speaker_wavs with shape [1, {HIDDEN}, frames]");
-        };
-        let voice_frames = *voice_frames;
-        ensure!(
-            (1..CONTEXT).contains(&voice_frames),
-            "invalid voice frame count"
-        );
-        let voice = voice.host_f32("speaker_wavs")?;
-        ensure!(
-            voice.iter().all(|x| x.is_finite()),
-            "voice contains non-finite values"
-        );
-        let mut generated: Bindings = serde_json::from_str(include_str!("weights.json"))?;
+        let voice = read_voice(&assets.voice)?;
         let mut bindings = Bindings::new();
-        for (name, key) in [
-            ("setup", "setup".to_owned()),
-            ("synthesize", format!("synthesize-{layers}")),
-        ] {
-            bindings.insert(
-                name.to_owned(),
-                generated
-                    .remove(&key)
-                    .with_context(|| format!("missing generated Phonon bindings for {key}"))?,
-            );
+        for entry in ["setup", "synthesize"] {
+            bindings.insert(entry.to_owned(), self::bindings(config, entry)?);
         }
-        for entry in bindings.values() {
-            for binding in entry {
-                let weights = if binding.codec { &codec } else { &model };
-                for name in &binding.names {
-                    weights.validate(name, &binding.shape)?;
-                }
-            }
-        }
-        for (name, shape) in [
-            ("flow_lm.emb_mean", &[LATENT][..]),
-            ("flow_lm.emb_std", &[LATENT][..]),
-        ] {
-            model.validate(name, shape)?;
-        }
+        validate_weights(&model, &codec, config)?;
         Ok(Self {
             model,
             codec,
             voice,
-            voice_frames,
             bindings,
         })
     }
 }
 
-struct Prompt {
-    ids: Vec<u64>,
-    words: usize,
+/// One utterance: its token IDs and spoken word count.
+pub struct Prompt {
+    pub ids: Vec<u64>,
+    pub words: usize,
 }
 
 impl Prompt {
@@ -388,7 +432,8 @@ impl Prompt {
         })
     }
 
-    fn split(tokenizer: &Tokenizer, text: &str) -> Result<Vec<Self>> {
+    /// Split text into utterances of at most `UTTERANCE_TOKENS` tokens.
+    pub fn split(tokenizer: &Tokenizer, text: &str) -> Result<Vec<Self>> {
         let text = text.trim();
         let encoded = Self::tokenize(tokenizer, text)?;
         if encoded.len() <= UTTERANCE_TOKENS {
@@ -442,7 +487,7 @@ fn boundary_rank(text: &str, end: usize) -> u8 {
     }
 }
 
-fn read_tokenizer(dir: &Path) -> Result<Tokenizer> {
+pub fn read_tokenizer(dir: &Path) -> Result<Tokenizer> {
     Tokenizer::from_file(dir.join(TOKENIZER))
         .map_err(anyhow::Error::msg)
         .context("loading Phonon tokenizer")
@@ -468,8 +513,8 @@ struct Graphs {
 }
 
 impl Graphs {
-    fn load(checkpoints: &mut Checkpoints, backbone_source: &str) -> Result<Self> {
-        let source = bundle(backbone_source);
+    fn load(checkpoints: &mut Checkpoints, config: &Config) -> Result<Self> {
+        let source = bundle(config);
         let (runtime, artifact) = catena::load_runtime(
             catena::runtime_sources(&source),
             model::configured_gpu_dialect()?,
@@ -481,10 +526,11 @@ impl Graphs {
                 if weights.contains_key(&binding.names) {
                     continue;
                 }
+                let values = materialize(&checkpoints.model, &checkpoints.codec, binding)?;
                 let mem = if binding.codec {
-                    binding.upload_f32(&runtime, &checkpoints.codec)?
+                    runtime.mem_f32(&values)?
                 } else {
-                    runtime.mem_u16(&bf16(&checkpoints.model.host_f32(&binding.names[0])?))?
+                    runtime.mem_u16(&bf16(&values))?
                 };
                 weights.insert(binding.names.clone(), mem);
             }
@@ -549,18 +595,18 @@ impl Phonon {
     /// Load a compatible Phonon checkpoint and a voice by its catalog name.
     pub fn load_model_with_voice(model: &str, voice: &str) -> Result<Self> {
         let assets = Assets::resolve(model, voice)?;
-        let backbone = assets.validate()?;
+        let config = Config::read(&assets.model, &assets.codec)?;
         let tokenizer = read_tokenizer(&assets.model)?;
-        let mut checkpoints = Checkpoints::load(&assets, backbone.layers)?;
-        let graphs = Graphs::load(&mut checkpoints, backbone.source)?;
+        let mut checkpoints = Checkpoints::load(&assets, &config)?;
+        let graphs = Graphs::load(&mut checkpoints, &config)?;
         let runtime = &graphs.runtime;
         let model = &checkpoints.model;
-        let voice = runtime.mem_u16(&bf16(&checkpoints.voice))?;
+        let voice = runtime.mem_u16(&bf16(&checkpoints.voice.values))?;
         let mut setup = graphs.execute(
             "setup",
             vec![
                 voice.as_ref().into(),
-                (checkpoints.voice_frames as u64).into(),
+                (checkpoints.voice.frames as u64).into(),
             ],
         )?;
         let Some(Value::U64(text_limit)) = setup.pop() else {
@@ -569,12 +615,12 @@ impl Phonon {
         ensure!(text_limit > 0, "Phonon voice leaves no room for text");
         let [voice, cond, bos, time] = outputs(setup)?;
         let zero = runtime.mem_f32(&[0.0; 2048])?;
-        let latent_std = runtime.mem_u16(&bf16(&model.host_f32("flow_lm.emb_std")?))?;
-        let latent_mean = runtime.mem_u16(&bf16(&model.host_f32("flow_lm.emb_mean")?))?;
+        let latent_std = runtime.mem_u16(&bf16(&model.host_f32(LATENT_STD)?))?;
+        let latent_mean = runtime.mem_u16(&bf16(&model.host_f32(LATENT_MEAN)?))?;
         Ok(Self {
             graphs,
             tokenizer,
-            voice_frames: checkpoints.voice_frames,
+            voice_frames: checkpoints.voice.frames,
             voice,
             cond,
             bos,
@@ -636,42 +682,155 @@ impl Phonon {
                 index.into(),
             ],
         )?;
-        let result = descriptor.try_to_u64_vec()?;
-        let [sample_count, error] = result.as_slice() else {
-            bail!("invalid Phonon result descriptor");
-        };
-        match error {
-            0 => {}
-            1 => bail!("text and audio frame budget exceed Phonon's context window"),
-            2 => bail!("Phonon produced an invalid end-of-speech score"),
-            _ => bail!("invalid Phonon generation status"),
-        }
-        let valid = usize::try_from(*sample_count).context("invalid Phonon sample count")?;
-        let mut samples = waveform.try_to_f32_vec()?;
-        ensure!(
-            valid > 0 && valid <= samples.len(),
-            "invalid Phonon sample count"
-        );
-        samples.truncate(valid);
-        ensure!(
-            samples.iter().all(|x| x.is_finite()),
-            "Mimi produced non-finite audio"
-        );
-        Ok(samples)
+        decode_utterance(&descriptor.try_to_u64_vec()?, waveform.try_to_f32_vec()?)
     }
+}
+
+/// The samples of one `phonon.synthesize` result. The descriptor is
+/// `[sample_count, status]`, and only status 0 carries audio.
+pub fn decode_utterance(descriptor: &[u64], mut samples: Vec<f32>) -> Result<Vec<f32>> {
+    let [sample_count, error] = descriptor else {
+        bail!("invalid Phonon result descriptor");
+    };
+    match error {
+        0 => {}
+        1 => bail!("text and audio frame budget exceed Phonon's context window"),
+        2 => bail!("Phonon produced an invalid end-of-speech score"),
+        _ => bail!("invalid Phonon generation status"),
+    }
+    let valid = usize::try_from(*sample_count).context("invalid Phonon sample count")?;
+    ensure!(
+        valid > 0 && valid <= samples.len(),
+        "invalid Phonon sample count"
+    );
+    samples.truncate(valid);
+    ensure!(
+        samples.iter().all(|x| x.is_finite()),
+        "Mimi produced non-finite audio"
+    );
+    Ok(samples)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    const CONFIGS: [Config; 2] = [
+        Config {
+            layers: 6,
+            source: include_str!("../catena/phonon-6.hex"),
+        },
+        Config {
+            layers: 9,
+            source: include_str!("../catena/phonon-9.hex"),
+        },
+    ];
+
+    #[test]
+    fn bindings_match_entry_signatures() -> Result<()> {
+        for (config, synthesize) in CONFIGS.iter().zip([154, 178]) {
+            let source = bundle(config);
+            for (entry, inputs, count) in [("setup", 1, 17), ("synthesize", 8, synthesize)] {
+                let bindings = bindings(config, entry)?;
+                assert_eq!(bindings.len(), count);
+                // Model arguments are single unpacked tensors.
+                assert!(
+                    bindings
+                        .iter()
+                        .all(|b| b.codec || (b.names.len() == 1 && b.packing.is_none()))
+                );
+                let signature = source
+                    .lines()
+                    .find(|line| line.starts_with(&format!("(def program phonon.{entry} ")))
+                    .and_then(|line| line.split(" -> ").next())
+                    .context("missing entry")?;
+                assert_eq!(
+                    signature.matches("((cap.ref mem) val)").count(),
+                    inputs + count
+                );
+            }
+            assert!(bindings(config, "decode").is_err());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn packing_puts_output_channels_innermost() -> Result<()> {
+        let path = std::env::temp_dir().join(format!("phonon-{}.safetensors", std::process::id()));
+        let data: Vec<u8> = (0..12).flat_map(|i| (i as f32).to_le_bytes()).collect();
+        let tensor =
+            |shape| safetensors::tensor::TensorView::new(safetensors::Dtype::F32, shape, &data);
+        safetensors::serialize_to_file(
+            [
+                ("conv", tensor(vec![2, 3, 2])?),
+                ("transposed", tensor(vec![3, 2, 2])?),
+                ("q", tensor(vec![2, 6])?),
+            ],
+            None,
+            &path,
+        )?;
+        let weights = Weights::open(&path)?;
+        std::fs::remove_file(&path)?;
+        let binding = |names: &[&str], shape: &[usize], packing, codec| Binding {
+            names: names.iter().map(|&n| n.to_owned()).collect(),
+            shape: shape.to_vec(),
+            packing,
+            codec,
+        };
+        // [out, in, taps] becomes [taps, in, out].
+        let conv = binding(&["conv"], &[2, 3, 2], Some(Packing::Conv), true);
+        assert_eq!(
+            materialize(&weights, &weights, &conv)?,
+            [0., 6., 2., 8., 4., 10., 1., 7., 3., 9., 5., 11.]
+        );
+        // [in, out, taps] becomes [taps, in, out].
+        let transposed = binding(&["transposed"], &[3, 2, 2], Some(Packing::Transposed), true);
+        assert_eq!(
+            materialize(&weights, &weights, &transposed)?,
+            [0., 2., 4., 6., 8., 10., 1., 3., 5., 7., 9., 11.]
+        );
+        // Concatenated projections are transposed as one [3 * out, in] matrix.
+        let qkv = binding(&["q", "q"], &[2, 6], Some(Packing::Qkv), true);
+        let packed = materialize(&weights, &weights, &qkv)?;
+        assert_eq!(packed[..8], [0., 6., 0., 6., 1., 7., 1., 7.]);
+        let plain = binding(&["q"], &[2, 6], None, false);
+        assert_eq!(
+            materialize(&weights, &weights, &plain)?,
+            weights.host_f32("q")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn catalog_and_result_validation() -> Result<()> {
+        let catalog = "{\"name\":\"A\",\"filename\":\"a.safetensors\"}\n\n\
+            {\"name\":\"B\",\"filename\":\"b.bin\"}\n\
+            {\"name\":\"C\",\"filename\":\"c.safetensors\"}\n\
+            {\"name\":\"C\",\"filename\":\"d.safetensors\"}";
+        assert_eq!(voice_filename(catalog, "A")?, "a.safetensors");
+        assert!(voice_filename(catalog, "B").is_err());
+        assert!(voice_filename(catalog, "C").is_err());
+        assert!(
+            voice_filename(catalog, "D")
+                .unwrap_err()
+                .is::<UnknownVoice>()
+        );
+
+        assert_eq!(decode_utterance(&[2, 0], vec![0.5, -0.5, 9.])?, [0.5, -0.5]);
+        for descriptor in [&[2, 1][..], &[2, 2], &[2, 3], &[0, 0], &[4, 0], &[2]] {
+            assert!(decode_utterance(descriptor, vec![0.; 3]).is_err());
+        }
+        assert!(decode_utterance(&[1, 0], vec![f32::NAN]).is_err());
+        Ok(())
+    }
+
     #[test]
     #[ignore = "requires the three cached Gradium repositories"]
     fn cached_assets_and_prompt() -> Result<()> {
         let assets = Assets::resolve(DEFAULT_MODEL, DEFAULT_VOICE)?;
-        let backbone = assets.validate()?;
-        let checkpoint = Checkpoints::load(&assets, backbone.layers)?;
-        assert_eq!(checkpoint.voice_frames, 125);
+        let config = Config::read(&assets.model, &assets.codec)?;
+        let checkpoint = Checkpoints::load(&assets, &config)?;
+        assert_eq!(checkpoint.voice.frames, 125);
         let tokenizer = read_tokenizer(&assets.model)?;
         let prompts = Prompt::split(&tokenizer, " Hello from Phonon. ")?;
         let [prompt] = prompts.as_slice() else {
@@ -710,11 +869,8 @@ mod tests {
     #[ignore = "compiles both Phonon backbones for HIP and CUDA"]
     fn synthesis_compiles_without_host_reads() -> Result<()> {
         use catena_lang::runtime::GpuDialect;
-        for backbone in [
-            include_str!("../catena/phonon-6.hex"),
-            include_str!("../catena/phonon-9.hex"),
-        ] {
-            let source = bundle(backbone);
+        for config in CONFIGS {
+            let source = bundle(&config);
             for dialect in [GpuDialect::Hip, GpuDialect::Cuda] {
                 let module = catena::compile_sources(catena::runtime_sources(&source), dialect)?;
                 assert!(!module.source.contains("= catena_host_read("));
