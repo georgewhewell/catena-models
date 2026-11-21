@@ -68,19 +68,47 @@ impl Config {
     }
 }
 use crate::hfhub::read_json;
+/// The token metadata of `generation_config.json`.
 #[derive(Deserialize)]
-struct Generation {
-    lang_to_id: BTreeMap<String, u32>,
-    task_to_id: BTreeMap<String, u32>,
-    no_timestamps_token_id: u32,
+pub struct Generation {
+    pub lang_to_id: BTreeMap<String, u32>,
+    pub task_to_id: BTreeMap<String, u32>,
+    pub no_timestamps_token_id: u32,
     #[serde(default)]
-    suppress_tokens: Vec<u32>,
+    pub suppress_tokens: Vec<u32>,
     #[serde(default)]
-    begin_suppress_tokens: Vec<u32>,
+    pub begin_suppress_tokens: Vec<u32>,
 }
 impl Generation {
+    pub fn read(dir: &Path, config: &Config) -> Result<Self> {
+        let generation: Self = read_json(&dir.join("generation_config.json"))?;
+        generation.validate(config)?;
+        Ok(generation)
+    }
+    pub fn validate(&self, config: &Config) -> Result<()> {
+        ensure!(
+            !self.lang_to_id.is_empty(),
+            "checkpoint has no language tokens"
+        );
+        ensure!(
+            self.lang_to_id
+                .values()
+                .chain(self.task_to_id.values())
+                .chain(self.suppress_tokens.iter())
+                .chain(self.begin_suppress_tokens.iter())
+                .chain(std::iter::once(&self.no_timestamps_token_id))
+                .all(|id| (*id as usize) < config.vocab_size),
+            "generation config contains out-of-range tokens"
+        );
+        ensure!(
+            self.task_to_id.contains_key("transcribe"),
+            "missing transcribe task token"
+        );
+        Ok(())
+    }
+    /// The F32 language, text and first-token masks of `whisper.transcribe`.
     // Non-learned token metadata becomes GPU masks; decisions stay in Hex.
-    fn masks(&self, vocab: usize, eos: u32) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    pub fn masks(&self, vocab: usize, eos: u32) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
         let mut language = vec![f32::NEG_INFINITY; vocab];
         for &id in self.lang_to_id.values() {
             language[id as usize] = 0.;
@@ -118,9 +146,12 @@ fn memories(values: Vec<Value<'_>>) -> Result<Vec<MemOwn>> {
         .collect()
 }
 
-pub fn validate_weights(w: &Weights, c: &Config) -> Result<()> {
+/// The checkpoint tensors of the Whisper entries and their shapes. All are
+/// stored as BF16; the `graph::*_names` functions give each argument order.
+pub fn weight_shapes(c: &Config) -> Vec<(String, Vec<usize>)> {
     let d = c.d_model;
     let ff = c.encoder_ffn_dim;
+    let mut shapes = Vec::new();
     for (n, shape) in [
         ("model.encoder.conv1.weight", vec![d, c.num_mel_bins, 3]),
         ("model.encoder.conv1.bias", vec![d]),
@@ -136,11 +167,11 @@ pub fn validate_weights(w: &Weights, c: &Config) -> Result<()> {
             vec![c.max_target_positions, d],
         ),
     ] {
-        w.validate(n, &shape)?;
+        shapes.push((n.to_owned(), shape));
     }
     for kind in ["encoder", "decoder"] {
         for suffix in ["weight", "bias"] {
-            w.validate(&format!("model.{kind}.layer_norm.{suffix}"), &[d])?;
+            shapes.push((format!("model.{kind}.layer_norm.{suffix}"), vec![d]));
         }
         let layers = if kind == "encoder" {
             c.encoder_layers
@@ -174,9 +205,16 @@ pub fn validate_weights(w: &Weights, c: &Config) -> Result<()> {
                 } else {
                     vec![d, d]
                 };
-                w.validate(&name, &shape)?;
+                shapes.push((name, shape));
             }
         }
+    }
+    shapes
+}
+pub fn validate_weights(w: &Weights, c: &Config) -> Result<()> {
+    let d = c.d_model;
+    for (name, shape) in weight_shapes(c) {
+        w.validate(&name, &shape)?;
     }
     if w.tensors.contains_key("proj_out.weight") {
         w.validate("proj_out.weight", &[c.vocab_size, d])?;
@@ -221,26 +259,7 @@ impl Whisper {
         let config = Config::read(dir)?;
         let mut checkpoint = Weights::open(&dir.join("model.safetensors"))?;
         validate_weights(&checkpoint, &config)?;
-        let generation: Generation = read_json(&dir.join("generation_config.json"))?;
-        ensure!(
-            !generation.lang_to_id.is_empty(),
-            "checkpoint has no language tokens"
-        );
-        ensure!(
-            generation
-                .lang_to_id
-                .values()
-                .chain(generation.task_to_id.values())
-                .chain(generation.suppress_tokens.iter())
-                .chain(generation.begin_suppress_tokens.iter())
-                .chain(std::iter::once(&generation.no_timestamps_token_id))
-                .all(|id| (*id as usize) < config.vocab_size),
-            "generation config contains out-of-range tokens"
-        );
-        ensure!(
-            generation.task_to_id.contains_key("transcribe"),
-            "missing transcribe task token"
-        );
+        let generation = Generation::read(dir, &config)?;
         let tokenizer = tokenizers::Tokenizer::from_file(dir.join("tokenizer.json"))
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         ensure!(
@@ -511,9 +530,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn bundle_uses_portable_reductions() -> Result<()> {
-        let config: Config = serde_json::from_value(serde_json::json!({
+    fn tiny() -> Result<Config> {
+        Ok(serde_json::from_value(serde_json::json!({
             "model_type": "whisper", "d_model": 384, "num_mel_bins": 80,
             "encoder_layers": 4, "decoder_layers": 4,
             "encoder_attention_heads": 6, "decoder_attention_heads": 6,
@@ -521,7 +539,34 @@ mod tests {
             "max_source_positions": 1500, "max_target_positions": 448,
             "vocab_size": 51865, "decoder_start_token_id": 50258,
             "eos_token_id": 50257, "activation_function": "gelu"
-        }))?;
+        }))?)
+    }
+
+    #[test]
+    fn generation_and_weight_shapes_match_the_entries() -> Result<()> {
+        let config = tiny()?;
+        let mut generation = generation();
+        assert!(generation.validate(&config).is_err());
+        generation.task_to_id.insert("transcribe".into(), 8);
+        generation.validate(&config)?;
+        generation.suppress_tokens.push(51865);
+        assert!(generation.validate(&config).is_err());
+
+        let shapes: BTreeMap<_, _> = weight_shapes(&config).into_iter().collect();
+        let arguments: BTreeSet<_> = graph::encoder_names(&config)
+            .into_iter()
+            .chain(graph::cross_names(&config))
+            .chain(graph::decoder_names(&config))
+            .collect();
+        assert_eq!(shapes.keys().cloned().collect::<BTreeSet<_>>(), arguments);
+        assert_eq!(shapes["model.encoder.conv1.weight"], [384, 80, 3]);
+        assert_eq!(shapes["model.decoder.layers.3.fc1.weight"], [1536, 384]);
+        Ok(())
+    }
+
+    #[test]
+    fn bundle_uses_portable_reductions() -> Result<()> {
+        let config = tiny()?;
         let source = graph::bundle(&config, false)?;
         assert!(!source.contains("bf16x2.dot-f32"));
         assert!(source.contains("stdlib.models.simt.or"));
