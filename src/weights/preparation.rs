@@ -236,6 +236,39 @@ mod tests {
         compile_sources(runtime_sources(&source), dialect)
     }
 
+    #[test]
+    #[ignore = "requires GPU"]
+    fn speech_concat_respects_active_frames() -> Result<()> {
+        let dialect = crate::model::configured_gpu_dialect()?;
+        let mut source = include_str!("../catena/memory.hex").to_owned();
+        for fragment in [
+            include_str!("../catena/cooperative.hex"),
+            &crate::catena::definitions(include_str!("../catena/tts_model.hex"), &["tts.read-bf16:"]),
+            &speech_concat(),
+            "(def program concat : {((cap.own mem) val) ((cap.own mem) val) ((cap.own mem) val)
+              ((cap.own mem) val)} -> ((cap.own mem) val) =
+              ([x y meta out.] ({[.x] [.y] (const.u64.0x0000000000000001) (const.u64.0x0000000000000001)
+              (const.u64.0x0000000000000EA6) [.meta] [.out]} stdlib.tts.prealloc.concat)))",
+        ] {
+            crate::qwen::fused::append_hex(&mut source, fragment);
+        }
+        let mut runtime = Runtime::new(dialect)?;
+        let artifact = runtime.load(compile_sources(runtime_sources(&source), dialect)?)?;
+        let x = runtime.mem_u16(&vec![0x3f80; 1875])?;
+        let y = runtime.mem_u16(&vec![0x4000; 1875])?;
+        let header = runtime.mem_u64(&[256])?;
+        let out = runtime.mem_u16(&vec![0x1234; 3750])?;
+        let [Value::MemOwn(out)] =
+            artifact.exec("concat", [x.into(), y.into(), header.into(), out.into()])?
+        else {
+            anyhow::bail!("missing speech concat result")
+        };
+        let values = out.try_to_u16_vec()?;
+        assert_eq!(values[..2], [0x3f80, 0x4000]);
+        assert!(values[2..].iter().all(|&n| n == 0x1234));
+        Ok(())
+    }
+
     fn concat_module(dialect: GpuDialect) -> Result<RuntimeModule> {
         let mut source = include_str!("../catena/memory.hex").to_owned();
         for fragment in [
