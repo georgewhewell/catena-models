@@ -237,6 +237,11 @@ impl Weights {
         }
         Ok(())
     }
+    pub(crate) fn insert_prepared(&mut self, name: &str, mem: MemOwn) -> Result<()> {
+        ensure!(self.tensors.contains_key(name), "missing tensor {name}");
+        self.converted.insert(name.to_owned(), mem);
+        Ok(())
+    }
     pub fn gpu_ref(&self, name: &str) -> Result<MemRef<'_>> {
         if let Some(m) = self.converted.get(name) {
             return Ok(m.as_ref());
