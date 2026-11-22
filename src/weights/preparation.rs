@@ -2,6 +2,10 @@
 use crate::qwen::{call, header, nested_product, pack, unpack};
 use std::fmt::Write;
 
+/// `stdlib.weights.row-norm(v, gain, columns, rows)` prepares row-major
+/// F32 checkpoint vectors as a contiguous row-major BF16 output.
+pub const ROW_NORM: &str = include_str!("../catena/weight_norm.hex");
+
 const REF: &str = "((cap.ref mem) val)";
 const OWN: &str = "((cap.own mem) val)";
 const U64: &str = "(u64 val)";
@@ -121,6 +125,48 @@ mod tests {
         ]
         .join("\n");
         compile_sources(runtime_sources(&source), dialect)
+    }
+
+    fn norm_module(dialect: GpuDialect) -> Result<RuntimeModule> {
+        let mut source = include_str!("../catena/memory.hex").to_owned();
+        for fragment in [
+            include_str!("../catena/numeric.hex"),
+            include_str!("../catena/cooperative.hex"),
+            ROW_NORM,
+            "(def program norm : {((cap.ref mem) val) ((cap.ref mem) val)} -> ((cap.own mem) val) =
+             ([v g.] ({[.v] [.g] (const.u64.0x0000000000000002) (const.u64.0x0000000000000002)} stdlib.weights.row-norm)))",
+        ] {
+            crate::qwen::fused::append_hex(&mut source, fragment);
+        }
+        compile_sources(runtime_sources(&source), dialect)
+    }
+
+    #[test]
+    fn weight_normalization_compiles_for_both_dialects() -> Result<()> {
+        for dialect in [GpuDialect::Cuda, GpuDialect::Hip] {
+            norm_module(dialect)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires GPU"]
+    fn normalized_weights_match_reference() -> Result<()> {
+        let dialect = crate::model::configured_gpu_dialect()?;
+        let mut runtime = Runtime::new(dialect)?;
+        let artifact = runtime.load(norm_module(dialect)?)?;
+        let input = runtime.mem_f32(&[3., 4., 5., 12.])?;
+        let gain = runtime.mem_f32(&[10., 6.5])?;
+        let [Value::MemOwn(out)] =
+            artifact.exec("norm", [input.as_ref().into(), gain.as_ref().into()])?
+        else {
+            anyhow::bail!("missing weight norm result")
+        };
+        assert_eq!(
+            out.try_to_u16_vec()?,
+            crate::weights::bf16(&[6., 8., 2.5, 6.])
+        );
+        Ok(())
     }
 
     #[test]
