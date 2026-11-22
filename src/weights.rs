@@ -6,10 +6,11 @@ use catena_lang::{
     runtime::{MemOwn, MemRef, Runtime},
 };
 use memmap2::{Mmap, MmapOptions};
-use safetensors::{Dtype, SafeTensors};
+use safetensors::{Dtype, tensor::Metadata};
 use std::{
     collections::BTreeMap,
     fs::File,
+    io::Read,
     path::{Path, PathBuf},
 };
 
@@ -33,6 +34,30 @@ fn cast_source(family: &str, entry: &str, input: &str, output: &str) -> String {
         .replace("{{ENTRY}}", entry)
         .replace("{{INPUT}}", input)
         .replace("{{OUTPUT}}", output)
+}
+
+/// Read only the length and JSON header of a shard. Tensor offsets in the
+/// returned metadata are relative to the returned start of tensor data.
+pub fn read_safetensors_header(
+    mut reader: impl Read,
+    file_bytes: u64,
+) -> Result<(usize, Metadata)> {
+    let mut length = [0; 8];
+    reader.read_exact(&mut length)?;
+    let length = u64::from_le_bytes(length);
+    // This is the safetensors format's maximum JSON header size.
+    ensure!(length <= 100_000_000, "safetensors header too large");
+    let data_start = 8 + length;
+    ensure!(data_start <= file_bytes, "truncated safetensors header");
+    let mut json = vec![0; length as usize];
+    reader.read_exact(&mut json)?;
+    // Metadata's deserializer checks shapes, dtypes, contiguity and sizes.
+    let metadata: Metadata = serde_json::from_slice(&json)?;
+    ensure!(
+        u64::try_from(metadata.data_len())? == file_bytes - data_start,
+        "safetensors tensor data length mismatch"
+    );
+    Ok((usize::try_from(data_start)?, metadata))
 }
 
 #[derive(Clone, Debug)]
@@ -76,7 +101,7 @@ impl Weights {
                 .with_context(|| format!("missing checkpoint {}", path.display()))?;
             // SAFETY: model files are immutable for the lifetime of this loader.
             let bytes = unsafe { MmapOptions::new().map(&file)? };
-            let (header, metadata) = SafeTensors::read_metadata(&bytes)
+            let (data_start, metadata) = read_safetensors_header(&bytes[..], bytes.len() as u64)
                 .with_context(|| format!("invalid safetensors {}", path.display()))?;
             for (name, t) in metadata.tensors() {
                 ensure!(!tensors.contains_key(&name), "duplicate tensor {name}");
@@ -96,7 +121,7 @@ impl Weights {
                         shape: t.shape.clone(),
                         dtype: t.dtype,
                         file: shards.len(),
-                        offset: header + 8 + t.data_offsets.0,
+                        offset: data_start + t.data_offsets.0,
                         len: t.data_offsets.1 - t.data_offsets.0,
                     },
                 );
@@ -280,5 +305,26 @@ mod half_tests {
         assert_eq!(f16_to_f32(0x8000).to_bits(), (-0_f32).to_bits());
         assert_eq!(f16_to_f32(0x7c00), f32::INFINITY);
         assert!(f16_to_f32(0x7e00).is_nan());
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::*;
+
+    #[test]
+    fn header_only_reader_checks_ranges_against_the_complete_file() {
+        let json = br#"{"v":{"dtype":"BF16","shape":[2],"data_offsets":[0,4]}}"#;
+        let mut bytes = (json.len() as u64).to_le_bytes().to_vec();
+        bytes.extend_from_slice(json);
+        let size = bytes.len() as u64 + 4;
+        let (start, metadata) = read_safetensors_header(bytes.as_slice(), size).unwrap();
+        assert_eq!(start, bytes.len());
+        assert_eq!(metadata.info("v").unwrap().data_offsets, (0, 4));
+        for wrong_size in [size - 5, size - 1, size + 1] {
+            assert!(read_safetensors_header(bytes.as_slice(), wrong_size).is_err());
+        }
+        assert!(read_safetensors_header(&bytes[..bytes.len() - 1], size).is_err());
+        assert!(read_safetensors_header(&u64::MAX.to_le_bytes()[..], u64::MAX).is_err());
     }
 }
