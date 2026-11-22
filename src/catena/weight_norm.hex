@@ -1,17 +1,17 @@
-# Materialize row-wise weight normalization. Each block reduces one F32 row.
+# Materialize row-wise weight normalization. Each block reduces one row in F32.
 # Output is BF16 after multiplication by the row gain divided by its L2 norm.
-(def program stdlib.weights.row-norm.square : {((cap.ref mem) val) (u64 val) (u64 val) ({(u64 val) (f32 val)} *)} -> (f32 val) =
+(def program {{ENTRY}}.square : {((cap.ref mem) val) (u64 val) (u64 val) ({(u64 val) (f32 val)} *)} -> (f32 val) =
  ([input base tid pair.]
   ([.pair] *.elim [i acc.])
   ({[.i] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.mul [stride.])
   ({[.stride] [.tid]} stdlib.models.memory.u64.add [channel.])
   ({[.base] [.channel]} stdlib.models.memory.u64.add [offset.])
-  ({[.input] [.offset]} stdlib.models.memory.ref-read-f32 [f.])
+  ({[.input] [.offset]} {{READ_VECTOR}} [f.])
   ({[.f] [.f]} stdlib.models.memory.f32.mul [squared.])
   ({[.acc] [.squared]} stdlib.models.memory.f32.add [sum.])
   [.sum]
  ))
-(def program stdlib.weights.row-norm.square.fold : {((cap.ref mem) val) (u64 val) (u64 val) ({({master.index u64} :) ({(f32 val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({(f32 val) (prop.Truth |-)} *) =
+(def program {{ENTRY}}.square.fold : {((cap.ref mem) val) (u64 val) (u64 val) ({({master.index u64} :) ({(f32 val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({(f32 val) (prop.Truth |-)} *) =
  ([input base tid pair.]
   ([.pair] *.elim [index rest.])
   ([.rest] *.elim [value proofs.])
@@ -19,23 +19,23 @@
   ([.less] unsafe.discard unit.elim)
   ([.index] :.forget [i.])
   ({[.i] [.value]} *.intro [arguments.])
-  ({[.input] [.base] [.tid] [.arguments]} stdlib.weights.row-norm.square [result.])
+  ({[.input] [.base] [.tid] [.arguments]} {{ENTRY}}.square [result.])
   ({[.result] [.truth]} *.intro)
  ))
-(def program stdlib.weights.row-norm.write : {((cap.ref mem) val) ((cap.own mem) val) (u64 val) (u64 val) (f32 val) ({(u64 val) ((cap.own mem) val)} *)} -> ((cap.own mem) val) =
+(def program {{ENTRY}}.write : {((cap.ref mem) val) ((cap.own mem) val) (u64 val) (u64 val) (f32 val) ({(u64 val) ((cap.own mem) val)} *)} -> ((cap.own mem) val) =
  ([input out base tid scale pair.]
   ([.pair] *.elim [i acc.])
   ({[.i] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.mul [stride.])
   ({[.stride] [.tid]} stdlib.models.memory.u64.add [channel.])
   ({[.base] [.channel]} stdlib.models.memory.u64.add [offset.])
-  ({[.input] [.offset]} stdlib.models.memory.ref-read-f32 [value.])
+  ({[.input] [.offset]} {{READ_VECTOR}} [value.])
   ({[.value] [.scale]} stdlib.models.memory.f32.mul [scaled.])
   ([.scaled] f32.to-bf16 [rounded.])
   ({[.out] [.offset] [.rounded]} stdlib.models.memory.write-bf16)
   (unit.elim)
   [.acc]
  ))
-(def program stdlib.weights.row-norm.write.fold : {((cap.ref mem) val) ((cap.own mem) val) (u64 val) (u64 val) (f32 val) ({({master.index u64} :) ({((cap.own mem) val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
+(def program {{ENTRY}}.write.fold : {((cap.ref mem) val) ((cap.own mem) val) (u64 val) (u64 val) (f32 val) ({({master.index u64} :) ({((cap.own mem) val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
  ([input out base tid scale pair.]
   ([.pair] *.elim [index rest.])
   ([.rest] *.elim [value proofs.])
@@ -43,10 +43,10 @@
   ([.less] unsafe.discard unit.elim)
   ([.index] :.forget [i.])
   ({[.i] [.value]} *.intro [arguments.])
-  ({[.input] [.out] [.base] [.tid] [.scale] [.arguments]} stdlib.weights.row-norm.write [result.])
+  ({[.input] [.out] [.base] [.tid] [.scale] [.arguments]} {{ENTRY}}.write [result.])
   ({[.result] [.truth]} *.intro)
  ))
-(def program stdlib.weights.row-norm.kernel : {((cap.ref mem) val) ((cap.ref mem) val) ((cap.own mem) val) (u64 val) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({({perf.block ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid} stdlib.gpu.geometry.type.Block)} :) (({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid perf.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
+(def program {{ENTRY}}.kernel : {((cap.ref mem) val) ((cap.ref mem) val) ((cap.own mem) val) (u64 val) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({({perf.block ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid} stdlib.gpu.geometry.type.Block)} :) (({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid perf.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
  ([input gain out columns memory thread.]
   ([.thread] stdlib.models.coop.indices [indices.])
   ([.indices] *.elim [row tid.])
@@ -54,7 +54,7 @@
   ({[.columns] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
   ({[.padded] [.tid]} stdlib.models.memory.u64.sub [remaining.])
   ({[.remaining] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [count.])
-  ({[.input] [.base] [.tid]} partial.stdlib.weights.row-norm.square.fold.3 [callback.])
+  ({[.input] [.base] [.tid]} partial.{{ENTRY}}.square.fold.3 [callback.])
   ({[.count] (unit.intro meta.master.end)} smolcat.value.named_at [end.])
   ({[.end] (const.u32.0x00000000 u32.bitcast-f32) [.callback] core.truth} core.fold.bounded_u64 [ sum proof.])
   ([.proof] unsafe.discard unit.elim)
@@ -64,22 +64,22 @@
   ({[.shared] [.synced]} meta.perf.after-shared [ready.])
   ({[.ready] [.tid] (const.u64.0x0000000000000000) (const.u64.0x0000000000000100)} stdlib.models.coop.reduce-add [total.])
   ([.total] stdlib.models.math.sqrt [root.])
-  ({[.gain] [.row]} stdlib.models.memory.ref-read-f32 [row-gain.])
+  ({[.gain] [.row]} {{READ_GAIN}} [row-gain.])
   ({[.row-gain] [.root]} stdlib.models.memory.f32.div [scale.])
-  ({[.input] [.out] [.base] [.tid] [.scale]} partial.stdlib.weights.row-norm.write.fold.5 [write-callback.])
+  ({[.input] [.out] [.base] [.tid] [.scale]} partial.{{ENTRY}}.write.fold.5 [write-callback.])
   ({[.count] (unit.intro meta.master.end)} smolcat.value.named_at [write-end.])
   ({[.write-end] [.out] [.write-callback] core.truth} core.fold.bounded_u64 [complete write-proof.])
   ([.write-proof] unsafe.discard unit.elim)
   (unit.intro)
  ))
-(def program stdlib.weights.row-norm.host : {((cap.ref mem) val) ((cap.ref mem) val) ((cap.own mem) val) (u64 val) ({perf.grid ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({(u64 val) ((cap.own mem) val)} *)} -> ((cap.own mem) val) =
+(def program {{ENTRY}}.host : {((cap.ref mem) val) ((cap.ref mem) val) ((cap.own mem) val) (u64 val) ({perf.grid ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({(u64 val) ((cap.own mem) val)} *)} -> ((cap.own mem) val) =
  ([input gain out columns grid memory pair.]
   ([.pair] *.elim [i acc.])
-  ({[.input] [.gain] [.out] [.columns] [.memory]} partial.stdlib.weights.row-norm.kernel.5 [kernel.])
+  ({[.input] [.gain] [.out] [.columns] [.memory]} partial.{{ENTRY}}.kernel.5 [kernel.])
   ({[.grid] ([.memory] :.forget) [.kernel]} unsafe.launch_shared unit.elim)
   [.acc]
  ))
-(def program stdlib.weights.row-norm.host.fold : {((cap.ref mem) val) ((cap.ref mem) val) ((cap.own mem) val) (u64 val) ({perf.grid ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({({master.index u64} :) ({((cap.own mem) val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
+(def program {{ENTRY}}.host.fold : {((cap.ref mem) val) ((cap.ref mem) val) ((cap.own mem) val) (u64 val) ({perf.grid ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({({master.index u64} :) ({((cap.own mem) val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
  ([input gain out columns grid memory pair.]
   ([.pair] *.elim [index rest.])
   ([.rest] *.elim [value proofs.])
@@ -87,17 +87,17 @@
   ([.less] unsafe.discard unit.elim)
   ([.index] :.forget [i.])
   ({[.i] [.value]} *.intro [arguments.])
-  ({[.input] [.gain] [.out] [.columns] [.grid] [.memory] [.arguments]} stdlib.weights.row-norm.host [result.])
+  ({[.input] [.gain] [.out] [.columns] [.grid] [.memory] [.arguments]} {{ENTRY}}.host [result.])
   ({[.result] [.truth]} *.intro)
  ))
-(def program stdlib.weights.row-norm : {((cap.ref mem) val) ((cap.ref mem) val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
+(def program {{ENTRY}} : {((cap.ref mem) val) ((cap.ref mem) val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
  ([input gain columns rows.]
   ({[.columns] [.rows]} stdlib.models.memory.u64.mul [count.])
   ([.count] stdlib.models.memory.alloc-bf16 [out.])
   ({[.rows] (const.u64.0x0000000000000100)} stdlib.models.coop.grid [grid.])
   ({(const.u64.0x0000000000000100) (const.u64.0x0000000000000001)} stdlib.models.coop.layout [layout.])
   ({[.grid] [.layout]} stdlib.models.coop.reserve [memory.])
-  ({[.input] [.gain] [.out] [.columns] [.grid] [.memory]} partial.stdlib.weights.row-norm.host.fold.6 [callback.])
+  ({[.input] [.gain] [.out] [.columns] [.grid] [.memory]} partial.{{ENTRY}}.host.fold.6 [callback.])
   ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
   ({[.end] [.out] [.callback] core.truth} core.fold.bounded_u64 [complete proof.])
   ([.proof] unsafe.discard unit.elim)

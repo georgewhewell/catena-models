@@ -50,20 +50,20 @@ fn main() -> Result<()> {
     if a.timings || a.inspect {
         eprintln!("MMS snapshot: {}", dir.display());
     }
-    if let Some(path) = a.generate_entrypoint {
-        std::fs::write(path, tts::graph::bundle(&config)?)?;
-        return Ok(());
-    }
-    if a.inspect {
+    if a.inspect || a.generate_entrypoint.is_some() {
         let weights = Weights::open(&dir.join("model.safetensors"))?;
-        tts::validate_weights(&weights, &config)?;
-        tts::tokenizer::Tokenizer::read(&dir)?;
-        eprintln!(
-            "MMS English: {} checkpoint tensors, {} inference bindings, {:.2} MiB, 16 kHz",
-            weights.tensors.len(),
-            tts::bindings().len(),
-            weights.byte_len() as f64 / (1 << 20) as f64
-        );
+        let program = tts::preparation::Program::checkpoint(&config, &weights)?;
+        if let Some(path) = a.generate_entrypoint {
+            std::fs::write(path, program.source)?;
+        } else {
+            tts::tokenizer::Tokenizer::read(&dir)?;
+            eprintln!(
+                "MMS English: {} checkpoint tensors, {} inference bindings, {:.2} MiB, 16 kHz",
+                weights.tensors.len(),
+                program.weights.len(),
+                weights.byte_len() as f64 / (1 << 20) as f64
+            );
+        }
         return Ok(());
     }
     let text = a.text.unwrap();

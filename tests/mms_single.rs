@@ -5,7 +5,7 @@ use catena_models::{
     tts,
     weights::{Weights, bf16},
 };
-use std::{collections::BTreeMap, path::Path};
+use std::path::Path;
 
 fn length_source() -> Vec<String> {
     let model = tts::graph::SOURCE
@@ -140,27 +140,12 @@ fn assert_dump(dir: &Path, name: &str, values: &[f32]) -> Result<()> {
 #[ignore = "requires HIP GPU, cached MMS weights, and /tmp/mms-single-baseline"]
 fn exported_single_call_is_valid_and_repeatable() -> Result<()> {
     let dir = tts::snapshot("facebook/mms-tts-eng")?;
-    let source = tts::graph::bundle(&tts::Config::read(&dir)?)?;
-    let module = compile_sources(runtime_sources(&source), GpuDialect::Hip)?;
+    let checkpoint = Weights::open(&dir.join("model.safetensors"))?;
+    let program = tts::preparation::Program::checkpoint(&tts::Config::read(&dir)?, &checkpoint)?;
+    let module = compile_sources(runtime_sources(&program.source), GpuDialect::Hip)?;
     let mut rt = Runtime::new(GpuDialect::Hip)?;
     let artifact = rt.load(module)?;
-    let mut checkpoint = Weights::open(&dir.join("model.safetensors"))?;
-    let bindings = tts::bindings();
-    let ordinary = bindings
-        .iter()
-        .filter(|(_, b)| !b.normalized && !b.transpose)
-        .map(|(n, _)| n.clone())
-        .collect::<Vec<_>>();
-    checkpoint.prepare(&rt, &ordinary, false)?;
-    let mut prepared = BTreeMap::new();
-    for (name, binding) in &bindings {
-        if binding.normalized || binding.transpose {
-            prepared.insert(
-                name.clone(),
-                rt.mem_u16(&bf16(&tts::materialize(&checkpoint, name, binding)?))?,
-            );
-        }
-    }
+    let weights = program.prepare(&checkpoint, &rt, &artifact)?;
     let ids = tts::tokenizer::Tokenizer::read(&dir)?.encode("Hi.")?;
     let tokens = rt.mem_u64(&ids)?;
     let args = |rate: f32| -> Result<Vec<Value<'_>>> {
@@ -173,13 +158,7 @@ fn exported_single_call_is_valid_and_repeatable() -> Result<()> {
             0.667f32.into(),
             rate.into(),
         ];
-        for (name, _) in &bindings {
-            values.push(if let Some(w) = prepared.get(name) {
-                w.as_ref().into()
-            } else {
-                checkpoint.gpu_ref(name)?.into()
-            });
-        }
+        values.extend(weights.iter().map(|weight| Value::from(weight.as_ref())));
         Ok(values)
     };
     let baseline = Path::new("/tmp/mms-single-baseline");

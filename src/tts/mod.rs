@@ -1,15 +1,12 @@
 //! English MMS/VITS speech synthesis through one Catena entrypoint.
 pub mod graph;
+pub mod preparation;
 pub mod tokenizer;
-use crate::{
-    hfhub,
-    weights::{Weights, bf16},
-};
+use crate::{hfhub, weights::Weights};
 use anyhow::{Context, Result, bail, ensure};
 use catena_lang::runtime::{Artifact, MemOwn, Runtime, Value};
 use serde::Deserialize;
 use std::{
-    collections::BTreeMap,
     io::{Cursor, Seek, Write},
     path::{Path, PathBuf},
     time::Instant,
@@ -152,98 +149,27 @@ pub struct Binding {
 pub fn bindings() -> Vec<(String, Binding)> {
     serde_json::from_str(include_str!("weights.json")).expect("generated TTS weight manifest")
 }
-pub fn validate_weights(weights: &Weights, config: &Config) -> Result<()> {
-    config.validate()?;
-    for (name, binding) in bindings() {
-        if binding.normalized {
-            let prefix = name.strip_suffix(".weight").unwrap();
-            weights.validate(&format!("{prefix}.weight_v"), &binding.shape)?;
-            weights.validate(&format!("{prefix}.weight_g"), &[binding.shape[0], 1, 1])?;
-        } else {
-            weights.validate(&name, &binding.shape)?;
-        }
-    }
-    Ok(())
-}
-/// Materialize checkpoint weight normalization before BF16 rounding. Transpose
-/// convolution weights are rearranged to the ordinary [out,in,k] GEMM layout.
-pub fn materialize(weights: &Weights, name: &str, binding: &Binding) -> Result<Vec<f32>> {
-    let mut values = if binding.normalized {
-        let prefix = name.strip_suffix(".weight").unwrap();
-        let v = weights.host_f32(&format!("{prefix}.weight_v"))?;
-        let g = weights.host_f32(&format!("{prefix}.weight_g"))?;
-        let terms = binding.shape[1] * binding.shape[2];
-        let mut out = v;
-        for (row, &gain) in out.chunks_exact_mut(terms).zip(&g) {
-            let norm = row.iter().map(|x| x * x).sum::<f32>().sqrt();
-            ensure!(
-                norm.is_finite() && norm > 0.,
-                "invalid normalized weight {name}"
-            );
-            for x in row {
-                *x *= gain / norm;
-            }
-        }
-        out
-    } else {
-        weights.host_f32(name)?
-    };
-    ensure!(
-        values.iter().all(|x| x.is_finite()),
-        "non-finite weight {name}"
-    );
-    if binding.transpose {
-        let (ci, co, k) = (binding.shape[0], binding.shape[1], binding.shape[2]);
-        let mut out = vec![0.; values.len()];
-        for i in 0..ci {
-            for o in 0..co {
-                for tap in 0..k {
-                    out[(o * ci + i) * k + tap] = values[(i * co + o) * k + tap];
-                }
-            }
-        }
-        values = out;
-    }
-    Ok(values)
-}
 pub struct Tts {
     runtime: Runtime,
     artifact: Artifact,
-    checkpoint: Weights,
-    weights: BTreeMap<String, MemOwn>,
+    weights: Vec<MemOwn>,
     tokenizer: tokenizer::Tokenizer,
 }
 impl Tts {
     pub fn load(dir: &Path, timings: bool) -> Result<Self> {
         let start = Instant::now();
         let config = Config::read(dir)?;
-        let mut checkpoint = Weights::open(&dir.join("model.safetensors"))?;
-        validate_weights(&checkpoint, &config)?;
+        let checkpoint = Weights::open(&dir.join("model.safetensors"))?;
         let tokenizer = tokenizer::Tokenizer::read(dir)?;
-        let source = graph::bundle(&config)?;
+        let program = preparation::Program::checkpoint(&config, &checkpoint)?;
         let (runtime, artifact) = crate::catena::load_runtime(
             crate::catena::core_sources()
                 .map(|s| -> &str { s })
-                .chain([source.as_str()]),
+                .chain([program.source.as_str()]),
             crate::model::configured_gpu_dialect()?,
         )
         .context("compiling MMS TTS Hex")?;
-        let ordinary = bindings()
-            .into_iter()
-            .filter(|(_, b)| !b.normalized && !b.transpose)
-            .map(|(n, _)| n)
-            .collect::<Vec<_>>();
-        checkpoint.prepare(&runtime, &ordinary, false)?;
-        let mut weights = BTreeMap::new();
-        for (name, binding) in bindings()
-            .into_iter()
-            .filter(|(_, b)| b.normalized || b.transpose)
-        {
-            weights.insert(
-                name.clone(),
-                runtime.mem_u16(&bf16(&materialize(&checkpoint, &name, &binding)?))?,
-            );
-        }
+        let weights = program.prepare(&checkpoint, &runtime, &artifact)?;
         if timings {
             eprintln!(
                 "load/compile/weight preparation: {:.3}s",
@@ -253,7 +179,6 @@ impl Tts {
         Ok(Self {
             runtime,
             artifact,
-            checkpoint,
             weights,
             tokenizer,
         })
@@ -262,25 +187,20 @@ impl Tts {
         options.validate()?;
         let ids = self.tokenizer.encode(text)?;
         let input = self.runtime.mem_u64(&ids)?;
-        let inputs = || -> Result<Vec<Value<'_>>> {
-            let mut args = vec![
-                input.as_ref().into(),
-                (ids.len() as u64).into(),
-                (options.seed as u32).into(),
-                ((options.seed >> 32) as u32).into(),
-                options.noise_scale_duration.into(),
-                options.noise_scale.into(),
-                options.speaking_rate.into(),
-            ];
-            for (name, _) in bindings() {
-                args.push(if let Some(weight) = self.weights.get(&name) {
-                    weight.as_ref().into()
-                } else {
-                    self.checkpoint.gpu_ref(&name)?.into()
-                });
-            }
-            Ok(args)
-        };
+        let mut args = vec![
+            input.as_ref().into(),
+            (ids.len() as u64).into(),
+            (options.seed as u32).into(),
+            ((options.seed >> 32) as u32).into(),
+            options.noise_scale_duration.into(),
+            options.noise_scale.into(),
+            options.speaking_rate.into(),
+        ];
+        args.extend(
+            self.weights
+                .iter()
+                .map(|weight| Value::from(weight.as_ref())),
+        );
         let start = Instant::now();
         let debug = options.dump_dir.is_some();
         let outputs = self.artifact.exec_values(
@@ -289,7 +209,7 @@ impl Tts {
             } else {
                 "tts.synthesize"
             },
-            inputs()?,
+            args,
         )?;
         let elapsed = start.elapsed().as_secs_f64();
         let mut outputs = outputs.into_iter();

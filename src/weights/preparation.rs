@@ -2,9 +2,17 @@
 use crate::qwen::{call, header, nested_product, pack, unpack};
 use std::fmt::Write;
 
-/// `stdlib.weights.row-norm(v, gain, columns, rows)` prepares row-major
-/// F32 checkpoint vectors as a contiguous row-major BF16 output.
-pub const ROW_NORM: &str = include_str!("../catena/weight_norm.hex");
+/// Materialize each checkpoint row as BF16 after applying its gain and L2 norm.
+pub fn row_norm(entry: &str, vector: Storage, gain: Storage) -> String {
+    let read = |storage: Storage| match storage {
+        Storage::F32 => "stdlib.models.memory.ref-read-f32",
+        Storage::Bf16 => "stdlib.models.memory.ref-read-bf16 bf16.to-f32",
+    };
+    include_str!("../catena/weight_norm.hex")
+        .replace("{{ENTRY}}", entry)
+        .replace("{{READ_VECTOR}}", read(vector))
+        .replace("{{READ_GAIN}}", read(gain))
+}
 
 const REF: &str = "((cap.ref mem) val)";
 const OWN: &str = "((cap.own mem) val)";
@@ -334,7 +342,7 @@ mod tests {
         for fragment in [
             include_str!("../catena/numeric.hex"),
             include_str!("../catena/cooperative.hex"),
-            ROW_NORM,
+            &row_norm("stdlib.weights.row-norm", Storage::F32, Storage::F32),
             "(def program norm : {((cap.ref mem) val) ((cap.ref mem) val)} -> ((cap.own mem) val) =
              ([v g.] ({[.v] [.g] (const.u64.0x0000000000000002) (const.u64.0x0000000000000002)} stdlib.weights.row-norm)))",
         ] {
