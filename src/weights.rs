@@ -49,6 +49,12 @@ pub struct TensorInfo {
     offset: usize,
     len: usize,
 }
+impl TensorInfo {
+    /// Byte offset from the beginning of the original shard.
+    pub fn byte_offset(&self) -> usize {
+        self.offset
+    }
+}
 struct Shard {
     registration: Option<GpuRegistration>,
     bytes: Mmap,

@@ -390,7 +390,19 @@ fn resolve_local_files(
         Ok(path)
     })
 }
+pub(crate) fn resolve_revision(model: &str, revision: &str, filenames: &[&str]) -> Result<PathBuf> {
+    let client = HFClientSync::new().context("initializing Hugging Face Hub client")?;
+    resolve_hub_files_at(&client, model, Some(revision), filenames)
+}
 fn resolve_hub_files(client: &HFClientSync, model: &str, filenames: &[&str]) -> Result<PathBuf> {
+    resolve_hub_files_at(client, model, None, filenames)
+}
+fn resolve_hub_files_at(
+    client: &HFClientSync,
+    model: &str,
+    revision: Option<&str>,
+    filenames: &[&str],
+) -> Result<PathBuf> {
     validate_model_name(model)?;
     let (owner, name) = split_id(model);
     ensure!(
@@ -400,6 +412,7 @@ fn resolve_hub_files(client: &HFClientSync, model: &str, filenames: &[&str]) -> 
     let repo = client.model(owner, name);
     resolve_files(filenames, |filename| {
         repo.download_file()
+            .maybe_revision(revision.map(str::to_owned))
             .filename(filename)
             .send()
             .with_context(|| format!("resolving {model}/{filename}"))

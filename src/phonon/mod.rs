@@ -1,7 +1,8 @@
 //! Gradium Phonon speech generation and Mimi decoding through Catena.
+pub mod preparation;
 use crate::{
     catena, hfhub, model,
-    weights::{Weights, bf16},
+    weights::{Weights, preparation::Binding as Operand},
 };
 use anyhow::{Context, Result, bail, ensure};
 use catena_lang::runtime::{Artifact, MemOwn, Runtime, Value};
@@ -109,12 +110,12 @@ pub fn voice_filename(catalog: &str, name: &str) -> Result<String> {
 fn resolve_voice(name: &str) -> Result<PathBuf> {
     let name = name.trim();
     ensure!(!name.is_empty(), "Phonon voice name must not be blank");
-    let root = hfhub::resolve_model_files(VOICE_REPO, &[VOICE_CATALOG])?;
+    let root = hfhub::resolve_revision(VOICE_REPO, VOICE_REPO_REVISION, &[VOICE_CATALOG])?;
     let catalog = root.join(VOICE_CATALOG);
     let data = std::fs::read_to_string(&catalog)
         .with_context(|| format!("reading {}", catalog.display()))?;
     let filename = voice_filename(&data, name)?;
-    let snapshot = hfhub::resolve_model_files(VOICE_REPO, &[&filename])
+    let snapshot = hfhub::resolve_revision(VOICE_REPO, VOICE_REPO_REVISION, &[&filename])
         .with_context(|| format!("resolving Phonon voice {name:?}"))?;
     ensure!(
         snapshot == root,
@@ -127,7 +128,7 @@ impl Assets {
     fn resolve(model: &str, voice: &str) -> Result<Self> {
         let voice = resolve_voice(voice)?;
         let model = hfhub::resolve_model_files(model, &MODEL_FILES)?;
-        let codec = hfhub::resolve_model_files(CODEC, &CODEC_FILES)?;
+        let codec = hfhub::resolve_revision(CODEC, CODEC_REVISION, &CODEC_FILES)?;
         Ok(Self {
             model,
             codec,
@@ -307,134 +308,15 @@ pub fn bindings(config: &Config, entry: &str) -> Result<Vec<Binding>> {
         .with_context(|| format!("missing generated Phonon bindings for {key}"))
 }
 
-pub fn validate_weights(model: &Weights, codec: &Weights, config: &Config) -> Result<()> {
-    for entry in ["setup", "synthesize"] {
-        for binding in bindings(config, entry)? {
-            let weights = if binding.codec { codec } else { model };
-            for name in &binding.names {
-                weights.validate(name, &binding.shape)?;
-            }
-        }
-    }
-    for name in [LATENT_MEAN, LATENT_STD] {
-        model.validate(name, &[LATENT])?;
-    }
-    Ok(())
-}
-
-/// The values of one weight argument, before rounding model tensors to BF16.
-pub fn materialize(model: &Weights, codec: &Weights, binding: &Binding) -> Result<Vec<f32>> {
-    binding.values(if binding.codec { codec } else { model })
-}
-
-impl Binding {
-    /// The bytes of this argument as stored: F32 for the codec, BF16 otherwise.
-    pub fn bytes(&self) -> usize {
-        self.elements() * if self.codec { 4 } else { 2 }
-    }
-
-    fn elements(&self) -> usize {
-        self.names.len() * self.shape.iter().product::<usize>()
-    }
-
-    fn values(&self, weights: &Weights) -> Result<Vec<f32>> {
-        let mut values = Vec::new();
-        for name in &self.names {
-            values.extend(weights.host_f32(name)?);
-        }
-        ensure!(
-            values.len() == self.elements(),
-            "Phonon binding {:?} has an unexpected size",
-            self.names
-        );
-        if let Some(packing) = &self.packing {
-            // Device convolution reads weights with the output channel as the fastest axis.
-            let packed = match packing {
-                Packing::Conv | Packing::Qkv => {
-                    let co = self.shape[0] * self.names.len();
-                    let ci = self.shape[1];
-                    let taps = self.shape.get(2).copied().unwrap_or(1);
-                    let mut packed = vec![0.0; values.len()];
-                    for tap in 0..taps {
-                        for i in 0..ci {
-                            for o in 0..co {
-                                packed[(tap * ci + i) * co + o] = values[(o * ci + i) * taps + tap];
-                            }
-                        }
-                    }
-                    packed
-                }
-                Packing::Transposed => {
-                    let (ci, co, taps) = (self.shape[0], self.shape[1], self.shape[2]);
-                    let mut packed = vec![0.0; values.len()];
-                    for tap in 0..taps {
-                        for i in 0..ci {
-                            for o in 0..co {
-                                packed[(tap * ci + i) * co + o] = values[(i * co + o) * taps + tap];
-                            }
-                        }
-                    }
-                    packed
-                }
-            };
-            return Ok(packed);
-        }
-        Ok(values)
-    }
-}
-
 type Bindings = BTreeMap<String, Vec<Binding>>;
 
-/// A voice's `speaker_wavs` values, `[1, 512, frames]` in checkpoint order.
-/// `phonon.setup` takes them rounded to BF16.
-pub struct Voice {
-    pub values: Vec<f32>,
-    pub frames: usize,
-}
-
-pub fn read_voice(path: &Path) -> Result<Voice> {
-    let voice = Weights::open(path)?;
-    let voice_tensor = voice
-        .tensors
-        .get("speaker_wavs")
-        .context("voice is missing speaker_wavs")?;
-    let [1, VOICE_CHANNELS, frames] = voice_tensor.shape.as_slice() else {
+/// Validate the catalog voice tensor and return the number of conditioning frames.
+pub fn voice_frames(shape: &[usize]) -> Result<usize> {
+    let [1, VOICE_CHANNELS, frames] = *shape else {
         bail!("expected speaker_wavs with shape [1, {VOICE_CHANNELS}, frames]");
     };
-    let frames = *frames;
     text_limit(frames)?;
-    let values = voice.host_f32("speaker_wavs")?;
-    ensure!(
-        values.iter().all(|x| x.is_finite()),
-        "voice contains non-finite values"
-    );
-    Ok(Voice { values, frames })
-}
-
-struct Checkpoints {
-    model: Weights,
-    codec: Weights,
-    voice: Voice,
-    bindings: Bindings,
-}
-
-impl Checkpoints {
-    fn load(assets: &Assets, config: &Config) -> Result<Self> {
-        let model = Weights::open(&assets.model.join("model.safetensors"))?;
-        let codec = Weights::open(&assets.codec.join("model.safetensors"))?;
-        let voice = read_voice(&assets.voice)?;
-        let mut bindings = Bindings::new();
-        for entry in ["setup", "synthesize"] {
-            bindings.insert(entry.to_owned(), self::bindings(config, entry)?);
-        }
-        validate_weights(&model, &codec, config)?;
-        Ok(Self {
-            model,
-            codec,
-            voice,
-            bindings,
-        })
-    }
+    Ok(frames)
 }
 
 /// One utterance: its token IDs and spoken word count.
@@ -542,59 +424,103 @@ fn outputs<const N: usize>(values: Vec<Value<'static>>) -> Result<[MemOwn; N]> {
         .map_err(|_| anyhow::anyhow!("invalid Phonon entrypoint result count"))
 }
 
+type Key = (bool, String);
+
 struct Graphs {
     runtime: Runtime,
     artifact: Artifact,
-    weights: BTreeMap<Vec<String>, MemOwn>,
-    bindings: Bindings,
+    direct: BTreeMap<Key, MemOwn>,
+    prepared: Vec<MemOwn>,
+    setup: Vec<Operand<Key>>,
+    synth: Vec<Operand<Key>>,
+    latents: [Operand<Key>; 2],
 }
 
 impl Graphs {
-    fn load(checkpoints: &mut Checkpoints, config: &Config) -> Result<Self> {
-        let source = bundle(config);
+    fn load(model: &Weights, codec: &Weights, voice: &Weights, config: &Config) -> Result<Self> {
+        let shard = |is_codec: bool| if is_codec { codec } else { model };
+        let voice_dtype = voice
+            .tensors
+            .get("speaker_wavs")
+            .context("voice has no speaker_wavs")?
+            .dtype;
+        let program = preparation::build(config, voice_dtype, |is_codec, name, shape| {
+            let weights = shard(is_codec);
+            weights.validate(name, shape)?;
+            let info = &weights.tensors[name];
+            Ok(((is_codec, name.to_owned()), info.dtype, info.byte_offset()))
+        })?;
         let (runtime, artifact) = catena::load_runtime(
-            catena::runtime_sources(&source),
+            catena::runtime_sources(&program.source),
             model::configured_gpu_dialect()?,
-        )
-        .context("compiling and loading Phonon Hex")?;
-        let mut weights = BTreeMap::new();
-        for bindings in checkpoints.bindings.values() {
-            for binding in bindings {
-                if weights.contains_key(&binding.names) {
-                    continue;
-                }
-                let values = materialize(&checkpoints.model, &checkpoints.codec, binding)?;
-                let mem = if binding.codec {
-                    runtime.mem_f32(&values)?
-                } else {
-                    runtime.mem_u16(&bf16(&values))?
-                };
-                weights.insert(binding.names.clone(), mem);
+        )?;
+        let upload = |key: &Key| shard(key.0).upload_raw(&runtime, &key.1);
+        let raw = program.raw.iter().map(upload).collect::<Result<Vec<_>>>()?;
+        let prepared = artifact
+            .exec_values(
+                preparation::WEIGHT_ENTRY,
+                raw.iter().map(|m| m.as_ref().into()).collect(),
+            )?
+            .into_iter()
+            .map(|v| match v {
+                Value::MemOwn(m) => Ok(m),
+                _ => bail!("expected prepared weight"),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        ensure!(
+            prepared.len() == program.outputs,
+            "wrong number of prepared weights"
+        );
+        drop(raw);
+        let mut direct = BTreeMap::new();
+        for operand in program
+            .setup
+            .iter()
+            .chain(&program.synth)
+            .chain(&program.latents)
+        {
+            if let Operand::Asset(key) = operand
+                && !direct.contains_key(key)
+            {
+                direct.insert(key.clone(), upload(key)?);
             }
         }
         Ok(Self {
             runtime,
             artifact,
-            weights,
-            bindings: std::mem::take(&mut checkpoints.bindings),
+            direct,
+            prepared,
+            setup: program.setup,
+            synth: program.synth,
+            latents: program.latents,
         })
     }
 
+    fn weight(&self, operand: &Operand<Key>) -> &MemOwn {
+        match operand {
+            Operand::Asset(key) => &self.direct[key],
+            Operand::Prepared(index) => &self.prepared[*index],
+        }
+    }
     fn execute<'a>(
         &'a self,
         entry: &str,
         mut inputs: Vec<Value<'a>>,
     ) -> Result<Vec<Value<'static>>> {
+        let weights = match entry {
+            "setup" => &self.setup,
+            "synthesize" => &self.synth,
+            _ => bail!("unknown Phonon entry"),
+        };
         inputs.extend(
-            self.bindings[entry]
+            weights
                 .iter()
-                .map(|binding| self.weights[&binding.names].as_ref().into()),
+                .map(|operand| self.weight(operand).as_ref().into()),
         );
         Ok(self
             .artifact
             .exec_values(&format!("phonon.{entry}"), inputs)?)
     }
-
     fn run<'a, const N: usize>(
         &'a self,
         entry: &str,
@@ -615,8 +541,6 @@ pub struct Phonon {
     bos: MemOwn,
     time: MemOwn,
     zero: MemOwn,
-    latent_std: MemOwn,
-    latent_mean: MemOwn,
 }
 
 impl Phonon {
@@ -634,17 +558,27 @@ impl Phonon {
         let assets = Assets::resolve(model, voice)?;
         let config = Config::read(&assets.model, &assets.codec)?;
         let tokenizer = read_tokenizer(&assets.model)?;
-        let mut checkpoints = Checkpoints::load(&assets, &config)?;
-        let graphs = Graphs::load(&mut checkpoints, &config)?;
+        let model = Weights::open(&assets.model.join("model.safetensors"))?;
+        let codec = Weights::open(&assets.codec.join("model.safetensors"))?;
+        let voice_weights = Weights::open(&assets.voice)?;
+        let frames = voice_frames(
+            &voice_weights
+                .tensors
+                .get("speaker_wavs")
+                .context("missing speaker_wavs")?
+                .shape,
+        )?;
+        let graphs = Graphs::load(&model, &codec, &voice_weights, &config)?;
         let runtime = &graphs.runtime;
-        let model = &checkpoints.model;
-        let voice = runtime.mem_u16(&bf16(&checkpoints.voice.values))?;
+        let raw_voice = voice_weights.upload_raw(runtime, "speaker_wavs")?;
+        let [conditioning] = outputs(
+            graphs
+                .artifact
+                .exec_values(preparation::VOICE_ENTRY, vec![raw_voice.as_ref().into()])?,
+        )?;
         let mut setup = graphs.execute(
             "setup",
-            vec![
-                voice.as_ref().into(),
-                (checkpoints.voice.frames as u64).into(),
-            ],
+            vec![conditioning.as_ref().into(), (frames as u64).into()],
         )?;
         let Some(Value::U64(text_limit)) = setup.pop() else {
             bail!("invalid Phonon setup result");
@@ -652,19 +586,15 @@ impl Phonon {
         ensure!(text_limit > 0, "Phonon voice leaves no room for text");
         let [voice, cond, bos, time] = outputs(setup)?;
         let zero = runtime.mem_f32(&[0.0; SCRATCH])?;
-        let latent_std = runtime.mem_u16(&bf16(&model.host_f32(LATENT_STD)?))?;
-        let latent_mean = runtime.mem_u16(&bf16(&model.host_f32(LATENT_MEAN)?))?;
         Ok(Self {
             graphs,
             tokenizer,
-            voice_frames: checkpoints.voice.frames,
+            voice_frames: frames,
             voice,
             cond,
             bos,
             time,
             zero,
-            latent_std,
-            latent_mean,
         })
     }
 
@@ -710,8 +640,8 @@ impl Phonon {
                 self.cond.as_ref().into(),
                 self.time.as_ref().into(),
                 self.zero.as_ref().into(),
-                self.latent_std.as_ref().into(),
-                self.latent_mean.as_ref().into(),
+                self.graphs.weight(&self.graphs.latents[0]).as_ref().into(),
+                self.graphs.weight(&self.graphs.latents[1]).as_ref().into(),
                 (self.voice_frames as u64).into(),
                 (prompt.ids.len() as u64).into(),
                 (prompt.words as u64).into(),
@@ -776,14 +706,6 @@ mod tests {
             assert!(text_limit(frames).is_err());
         }
         assert_eq!(waveform_samples(50), 234 * FRAME_SAMPLES);
-        let binding = |codec| Binding {
-            names: vec!["a".into(), "b".into()],
-            shape: vec![3, 5],
-            packing: None,
-            codec,
-        };
-        assert_eq!(binding(false).bytes(), 60);
-        assert_eq!(binding(true).bytes(), 120);
         Ok(())
     }
 
@@ -816,53 +738,6 @@ mod tests {
     }
 
     #[test]
-    fn packing_puts_output_channels_innermost() -> Result<()> {
-        let path = std::env::temp_dir().join(format!("phonon-{}.safetensors", std::process::id()));
-        let data: Vec<u8> = (0..12).flat_map(|i| (i as f32).to_le_bytes()).collect();
-        let tensor =
-            |shape| safetensors::tensor::TensorView::new(safetensors::Dtype::F32, shape, &data);
-        safetensors::serialize_to_file(
-            [
-                ("conv", tensor(vec![2, 3, 2])?),
-                ("transposed", tensor(vec![3, 2, 2])?),
-                ("q", tensor(vec![2, 6])?),
-            ],
-            None,
-            &path,
-        )?;
-        let weights = Weights::open(&path)?;
-        std::fs::remove_file(&path)?;
-        let binding = |names: &[&str], shape: &[usize], packing, codec| Binding {
-            names: names.iter().map(|&n| n.to_owned()).collect(),
-            shape: shape.to_vec(),
-            packing,
-            codec,
-        };
-        // [out, in, taps] becomes [taps, in, out].
-        let conv = binding(&["conv"], &[2, 3, 2], Some(Packing::Conv), true);
-        assert_eq!(
-            materialize(&weights, &weights, &conv)?,
-            [0., 6., 2., 8., 4., 10., 1., 7., 3., 9., 5., 11.]
-        );
-        // [in, out, taps] becomes [taps, in, out].
-        let transposed = binding(&["transposed"], &[3, 2, 2], Some(Packing::Transposed), true);
-        assert_eq!(
-            materialize(&weights, &weights, &transposed)?,
-            [0., 2., 4., 6., 8., 10., 1., 3., 5., 7., 9., 11.]
-        );
-        // Concatenated projections are transposed as one [3 * out, in] matrix.
-        let qkv = binding(&["q", "q"], &[2, 6], Some(Packing::Qkv), true);
-        let packed = materialize(&weights, &weights, &qkv)?;
-        assert_eq!(packed[..8], [0., 6., 0., 6., 1., 7., 1., 7.]);
-        let plain = binding(&["q"], &[2, 6], None, false);
-        assert_eq!(
-            materialize(&weights, &weights, &plain)?,
-            weights.host_f32("q")?
-        );
-        Ok(())
-    }
-
-    #[test]
     fn catalog_and_result_validation() -> Result<()> {
         let catalog = "{\"name\":\"A\",\"filename\":\"a.safetensors\"}\n\n\
             {\"name\":\"B\",\"filename\":\"b.bin\"}\n\
@@ -890,8 +765,17 @@ mod tests {
     fn cached_assets_and_prompt() -> Result<()> {
         let assets = Assets::resolve(DEFAULT_MODEL, DEFAULT_VOICE)?;
         let config = Config::read(&assets.model, &assets.codec)?;
-        let checkpoint = Checkpoints::load(&assets, &config)?;
-        assert_eq!(checkpoint.voice.frames, 125);
+        let model = Weights::open(&assets.model.join("model.safetensors"))?;
+        let codec = Weights::open(&assets.codec.join("model.safetensors"))?;
+        let voice = Weights::open(&assets.voice)?;
+        let info = &voice.tensors["speaker_wavs"];
+        assert_eq!(voice_frames(&info.shape)?, 125);
+        preparation::build(&config, info.dtype, |is_codec, name, shape| {
+            let checkpoint = if is_codec { &codec } else { &model };
+            checkpoint.validate(name, shape)?;
+            let t = &checkpoint.tensors[name];
+            Ok(((), t.dtype, t.byte_offset()))
+        })?;
         let tokenizer = read_tokenizer(&assets.model)?;
         let prompts = Prompt::split(&tokenizer, " Hello from Phonon. ")?;
         let [prompt] = prompts.as_slice() else {
