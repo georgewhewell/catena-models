@@ -170,6 +170,58 @@ mod tests {
     use anyhow::Result;
     use catena_lang::runtime::{GpuDialect, Runtime, RuntimeModule, Value};
 
+    #[test]
+    #[ignore = "requires GPU"]
+    fn checkpoint_cast_rounds_finite_values_and_preserves_nan_class() -> Result<()> {
+        let dialect = crate::model::configured_gpu_dialect()?;
+        let mut runtime = Runtime::new(dialect)?;
+        let source = format!(
+            "{}\n{}",
+            include_str!("../catena/memory.hex"),
+            cast_to_bf16_source()
+        );
+        let artifact = runtime.load(compile_sources(runtime_sources(&source), dialect)?)?;
+        let bits = [
+            0,
+            0x8000_0000,
+            1,
+            0x0000_8000,
+            0x0000_8001,
+            0x007f_ffff,
+            0x0080_0000,
+            0x3f80_7fff,
+            0x3f80_8000,
+            0x3f81_8000,
+            0xbf81_8000,
+            0x7f7f_ffff,
+            0x7f80_0000,
+            0xff80_0000,
+            0x7fc1_2345,
+            0xff80_0001,
+        ];
+        let values = bits.map(f32::from_bits);
+        let input = runtime.mem_f32(&values)?;
+        let [Value::MemOwn(out)] = artifact.exec(
+            "inference.f32-to-bf16",
+            [input.as_ref().into(), (values.len() as u64).into()],
+        )?
+        else {
+            anyhow::bail!("missing BF16 result")
+        };
+        let rounded = out.try_to_u16_vec()?;
+        assert_eq!(rounded.len(), bits.len());
+        for (i, actual) in rounded.into_iter().enumerate() {
+            let host = crate::weights::f32_to_bf16(values[i]);
+            if values[i].is_nan() {
+                assert!(crate::weights::bf16_to_f32(actual).is_nan());
+                eprintln!("NaN {:08x} host {host:04x} device {actual:04x}", bits[i]);
+            } else {
+                assert_eq!(actual, host, "input {:08x}", bits[i]);
+            }
+        }
+        Ok(())
+    }
+
     fn permutation_module(dialect: GpuDialect) -> Result<RuntimeModule> {
         let source = [
             include_str!("../catena/memory.hex"),
