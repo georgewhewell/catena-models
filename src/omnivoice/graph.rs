@@ -686,7 +686,7 @@ fn pack_layers(source: &mut String, layer_names: &[String]) {
 /// `omnivoice.synthesize(text: u64[], prefix: u64, frames: u64, seed: u64,
 /// ...model_bindings, ...quantizers, ...codec tensors)` returns
 /// `waveform_samples(frames)` F32 samples. `prefix` is the text token count.
-pub fn build(
+pub(super) fn build(
     config: &ModelConfig,
     diagnostics: bool,
     dialect: GpuDialect,
@@ -884,6 +884,10 @@ pub fn build(
         call(&mut source, &names, "stdlib.omnivoice.decode", "raw");
         finish(&mut source, "raw");
     }
+    (source, codec.weights)
+}
+
+pub(super) fn exports(source: String) -> String {
     // Restrict the exported ABI to OmniVoice. Shared helpers are pruned by reachability.
     let mapping: BTreeMap<_, _> = source
         .split("(def program ")
@@ -894,5 +898,5 @@ pub fn build(
                 .then(|| (name.to_owned(), format!("stdlib.omnivoice.shared.{name}")))
         })
         .collect();
-    (catena::rename_programs(&source, &mapping), codec.weights)
+    catena::rename_programs(&source, &mapping)
 }

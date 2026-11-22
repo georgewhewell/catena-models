@@ -1,16 +1,16 @@
 //! Text-only k2-fsa/OmniVoice synthesis with the bundled Higgs audio decoder.
 pub mod graph;
 pub mod prompt;
+pub mod setup;
 
 use crate::{
     catena, hfhub, model,
-    spec::{ModelConfig, WeightDtype, weight_specs},
+    spec::ModelConfig,
     tts::Audio,
-    weights::{Weights, bf16},
+    weights::{Weights, preparation::Binding},
 };
 use anyhow::{Context, Result, anyhow, ensure};
 use catena_lang::runtime::{Artifact, MemOwn, Runtime, Value};
-use graph::{Packing, Tensor};
 use serde_json::{Value as Json, json};
 use std::path::Path;
 use tokenizers::Tokenizer;
@@ -30,11 +30,9 @@ pub const FILES: &[&str] = &[
 pub struct OmniVoice {
     runtime: Runtime,
     artifact: Artifact,
-    model: Weights,
-    model_names: Vec<String>,
-    codec: Weights,
-    codec_weights: Vec<Tensor>,
-    quantizer: [MemOwn; 3],
+    weights: Vec<MemOwn>,
+    #[cfg(test)]
+    model_weights: usize,
     tokenizer: Tokenizer,
     config: ModelConfig,
 }
@@ -51,51 +49,50 @@ impl OmniVoice {
         let tokenizer = Tokenizer::from_file(directory.join("tokenizer.json"))
             .map_err(|err| anyhow!("loading OmniVoice tokenizer: {err}"))?;
         let dialect = model::configured_gpu_dialect()?;
-        let (source, codec_weights) = graph::build(&config, diagnostics, dialect);
-        let mut model = Weights::open(&directory.join("model.safetensors"))?;
-        let (model_names, model_f32, model_bf16) = model_bindings(&config, &model)?;
-        let mut codec = Weights::open(&directory.join("audio_tokenizer/model.safetensors"))?;
-        for tensor in &codec_weights {
-            codec.validate(&tensor.name, &tensor.shape)?;
-        }
-        let (runtime, artifact) = catena::load_runtime(catena::runtime_sources(&source), dialect)
-            .context("compiling and loading OmniVoice HEX")?;
-        model.prepare(&runtime, &model_f32, true)?;
-        model.prepare(&runtime, &model_bf16, false)?;
-        let codec_names = |f32_storage| {
-            codec_weights
-                .iter()
-                .filter(|tensor| {
-                    matches!(
-                        (tensor.packing, f32_storage),
-                        (Packing::F32, true) | (Packing::Bf16, false)
-                    )
-                })
-                .map(|tensor| tensor.name.clone())
-                .collect::<Vec<_>>()
-        };
-        codec.prepare(&runtime, &codec_names(true), true)?;
-        codec.prepare(&runtime, &codec_names(false), false)?;
-        for tensor in &codec_weights {
-            if let Packing::TransposedConv = tensor.packing {
-                let packed = transposed_conv(&codec, tensor)?;
-                codec.insert_prepared(&tensor.name, runtime.mem_u16(&bf16(&packed))?)?;
-            }
-        }
-        let [embeddings, projections, biases] = quantizers(&codec)?;
-        let quantizer = [
-            runtime.mem_f32(&embeddings)?,
-            runtime.mem_f32(&projections)?,
-            runtime.mem_f32(&biases)?,
-        ];
+        let model = Weights::open(&directory.join(setup::MODEL))?;
+        let codec = Weights::open(&directory.join(setup::CODEC))?;
+        let files = [&model, &codec];
+        let setup = setup::program(&config, diagnostics, dialect, |file, name, shape| {
+            let index = usize::from(file == setup::CODEC);
+            files[index].validate(name, shape)?;
+            Ok(((index, name.to_owned()), files[index].tensors[name].dtype))
+        })?;
+        let (runtime, artifact) =
+            catena::load_runtime(catena::runtime_sources(&setup.source), dialect)
+                .context("compiling and loading OmniVoice HEX")?;
+        let upload = |(file, name): &(usize, String)| files[*file].upload_raw(&runtime, name);
+        let raw = setup
+            .inputs
+            .iter()
+            .map(upload)
+            .collect::<Result<Vec<_>>>()?;
+        let outputs = artifact.exec_values(
+            "omnivoice.setup",
+            raw.iter().map(|m| m.as_ref().into()).collect(),
+        )?;
+        drop(raw);
+        ensure!(
+            outputs.len() == setup.outputs,
+            "invalid OmniVoice setup output count"
+        );
+        let mut outputs: Vec<_> = outputs.into_iter().map(Some).collect();
+        let weights = setup
+            .weights
+            .into_iter()
+            .map(|binding| match binding {
+                Binding::Asset(key) => upload(&key),
+                Binding::Prepared(i) => match outputs[i].take() {
+                    Some(Value::MemOwn(weight)) => Ok(weight),
+                    _ => Err(anyhow!("invalid OmniVoice setup output {i}")),
+                },
+            })
+            .collect::<Result<_>>()?;
         Ok(Self {
             runtime,
             artifact,
-            model,
-            model_names,
-            codec,
-            codec_weights,
-            quantizer,
+            weights,
+            #[cfg(test)]
+            model_weights: setup.model_weights,
             tokenizer,
             config,
         })
@@ -122,10 +119,7 @@ impl OmniVoice {
             (frames as u64).into(),
             seed.into(),
         ];
-        for name in &self.model_names {
-            args.push(self.model.gpu_ref(name)?.into());
-        }
-        self.codec_args(&mut args)?;
+        args.extend(self.weights.iter().map(|w| w.as_ref().into()));
         let wave = self.execute("omnivoice.synthesize", args)?;
         let samples = wave.try_to_f32_vec()?;
         ensure!(
@@ -136,14 +130,6 @@ impl OmniVoice {
             samples,
             sample_rate: SAMPLE_RATE,
         })
-    }
-
-    fn codec_args<'a>(&'a self, args: &mut Vec<Value<'a>>) -> Result<()> {
-        args.extend(self.quantizer.iter().map(|mem| mem.as_ref().into()));
-        for tensor in &self.codec_weights {
-            args.push(self.codec.gpu_ref(&tensor.name)?.into());
-        }
-        Ok(())
     }
 
     fn execute(&self, entry: &str, args: Vec<Value<'_>>) -> Result<MemOwn> {
@@ -274,81 +260,6 @@ pub fn config(directory: &Path) -> Result<ModelConfig> {
     Ok(qwen)
 }
 
-/// The model tensors `omnivoice.synthesize` takes after its scalars, in order,
-/// followed by the subsets stored as F32 and as BF16.
-pub fn model_bindings(
-    config: &ModelConfig,
-    weights: &Weights,
-) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
-    let specs = weight_specs(config)?;
-    let mut names = vec![
-        "llm.embed_tokens.weight".to_owned(),
-        "audio_embeddings.weight".to_owned(),
-        "audio_heads.weight".to_owned(),
-        "llm.norm.weight".to_owned(),
-    ];
-    let mut f32_names = vec![names[3].clone()];
-    let mut bf16_names = names[..3].to_vec();
-    weights.validate(&names[0], &[config.vocabulary_size, config.hidden_size])?;
-    for name in &names[1..3] {
-        weights.validate(name, &[8200, config.hidden_size])?;
-    }
-    weights.validate(&names[3], &[config.hidden_size])?;
-    for spec in specs
-        .iter()
-        .filter(|spec| spec.name.starts_with("model.layers."))
-    {
-        let name = spec.name.replacen("model.", "llm.", 1);
-        weights.validate(&name, &spec.shape)?;
-        names.push(name.clone());
-        match spec.dtype {
-            WeightDtype::F32 => f32_names.push(name),
-            WeightDtype::Bf16 | WeightDtype::F16 => bf16_names.push(name),
-        }
-    }
-    ensure!(
-        names.len() == 4 + config.num_layers * 11,
-        "invalid Qwen3 layer bindings"
-    );
-    Ok((names, f32_names, bf16_names))
-}
-
-/// A transposed-convolution codec tensor as `[out, in, taps]`, before BF16 rounding.
-pub fn transposed_conv(codec: &Weights, tensor: &Tensor) -> Result<Vec<f32>> {
-    let [input, output, taps] = *tensor.shape.as_slice() else {
-        unreachable!("transposed-convolution dimensions")
-    };
-    let data = codec.host_f32(&tensor.name)?;
-    let mut packed = Vec::with_capacity(data.len());
-    for co in 0..output {
-        for ci in 0..input {
-            let start = (ci * output + co) * taps;
-            packed.extend_from_slice(&data[start..start + taps]);
-        }
-    }
-    Ok(packed)
-}
-
-/// The F32 embeddings, projections and biases of the eight codebooks, which
-/// `omnivoice.synthesize` takes between the model and codec tensors.
-pub fn quantizers(codec: &Weights) -> Result<[Vec<f32>; 3]> {
-    Ok([
-        quantizer(codec, "codebook.embed", &[1024, 64])?,
-        quantizer(codec, "project_out.weight", &[1024, 64])?,
-        quantizer(codec, "project_out.bias", &[1024])?,
-    ])
-}
-
-fn quantizer(weights: &Weights, suffix: &str, shape: &[usize]) -> Result<Vec<f32>> {
-    let mut values = Vec::with_capacity(8 * shape.iter().product::<usize>());
-    for codebook in 0..8 {
-        let name = format!("quantizer.quantizers.{codebook}.{suffix}");
-        weights.validate(&name, shape)?;
-        values.extend(weights.host_f32(&name)?);
-    }
-    Ok(values)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,44 +267,26 @@ mod tests {
 
     #[test]
     fn synthesize_signature_matches_bindings() -> Result<()> {
-        let config = ModelConfig::qwen3_0_6b();
         for dialect in [GpuDialect::Hip, GpuDialect::Cuda] {
-            let (source, codec) = graph::build(&config, false, dialect);
-            let signature = source
-                .lines()
-                .find(|line| line.starts_with("(def program omnivoice.synthesize "))
-                .and_then(|line| line.split(" -> ").next())
-                .context("missing entry")?;
-            // Text, model tensors, quantizers and codec tensors.
-            assert_eq!(
-                signature.matches("((cap.ref mem) val)").count(),
-                1 + 4 + config.num_layers * 11 + 3 + codec.len()
-            );
-            assert_eq!(signature.matches("(u64 val)").count(), 3);
+            let p = setup::program(&ModelConfig::qwen3_0_6b(), false, dialect, |_, _, _| {
+                Ok(((), safetensors::Dtype::F32))
+            })?;
+            let signature = |name: &str| {
+                p.source
+                    .lines()
+                    .find(|line| line.starts_with(&format!("(def program {name} :")))
+                    .unwrap()
+                    .split_once(" -> ")
+                    .unwrap()
+            };
+            let (inputs, outputs) = signature("omnivoice.setup");
+            assert_eq!(inputs.matches(graph::REF).count(), p.inputs.len());
+            assert_eq!(outputs.matches(graph::OWN).count(), p.outputs);
+            let (inputs, _) = signature("omnivoice.synthesize");
+            assert_eq!(inputs.matches(graph::REF).count(), 1 + p.weights.len());
+            assert_eq!(inputs.matches("(u64 val)").count(), 3);
         }
         assert_eq!(waveform_samples(67), 69_120);
-        Ok(())
-    }
-
-    #[test]
-    fn transposed_convolutions_pack_output_channels_first() -> Result<()> {
-        let path =
-            std::env::temp_dir().join(format!("omnivoice-{}.safetensors", std::process::id()));
-        let data: Vec<u8> = (0..12).flat_map(|i| (i as f32).to_le_bytes()).collect();
-        let view =
-            safetensors::tensor::TensorView::new(safetensors::Dtype::F32, vec![3, 2, 2], &data)?;
-        safetensors::serialize_to_file([("up", view)], None, &path)?;
-        let weights = Weights::open(&path)?;
-        std::fs::remove_file(&path)?;
-        let tensor = Tensor {
-            name: "up".into(),
-            shape: vec![3, 2, 2],
-            packing: Packing::TransposedConv,
-        };
-        assert_eq!(
-            transposed_conv(&weights, &tensor)?,
-            [0., 1., 4., 5., 8., 9., 2., 3., 6., 7., 10., 11.]
-        );
         Ok(())
     }
 
@@ -401,8 +294,10 @@ mod tests {
     #[ignore = "compiles the full OmniVoice graph for HIP and CUDA"]
     fn graph_compiles_for_both_gpu_dialects() -> Result<()> {
         for dialect in [GpuDialect::Hip, GpuDialect::Cuda] {
-            let (source, _) = graph::build(&ModelConfig::qwen3_0_6b(), false, dialect);
-            let module = catena::compile_sources(catena::runtime_sources(&source), dialect)?;
+            let p = setup::program(&ModelConfig::qwen3_0_6b(), false, dialect, |_, _, _| {
+                Ok(((), safetensors::Dtype::F32))
+            })?;
+            let module = catena::compile_sources(catena::runtime_sources(&p.source), dialect)?;
             ensure!(
                 !module.source.contains("catena_host_read"),
                 "unexpected model readback"
@@ -473,7 +368,11 @@ mod tests {
         let frames = 3u64;
         let codes: Vec<u64> = (0..frames * 8).map(|i| (i * 37 + 13) % 1024).collect();
         let mut args = vec![model.runtime.mem_u64(&codes)?.into(), frames.into()];
-        model.codec_args(&mut args)?;
+        args.extend(
+            model.weights[model.model_weights..]
+                .iter()
+                .map(|w| w.as_ref().into()),
+        );
         let wave = model.execute("omnivoice.decode", args)?.try_to_u16_vec()?;
         ensure!(
             wave.len() == frames as usize * FRAME_SAMPLES,
@@ -496,9 +395,11 @@ mod tests {
                 frames.into(),
                 model.runtime.mem_u64(&masked)?.into(),
             ];
-            for name in &model.model_names {
-                args.push(model.model.gpu_ref(name)?.into());
-            }
+            args.extend(
+                model.weights[..model.model_weights]
+                    .iter()
+                    .map(|w| w.as_ref().into()),
+            );
             let logits = model.execute("omnivoice.logits", args)?.try_to_u16_vec()?;
             ensure!(
                 logits.len() == frames as usize * 8200,
