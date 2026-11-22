@@ -18,7 +18,9 @@ pub use crate::tts::Audio;
 pub const DEFAULT_MODEL: &str = "gradium/phonon-31m-en";
 pub const DEFAULT_VOICE: &str = "Easton";
 pub const CODEC: &str = "gradium/phonon-mimi";
+pub const CODEC_REVISION: &str = "33519be1a8e61c6fa00c6e154e2d38e76a367919";
 pub const VOICE_REPO: &str = "gradium/phonon-voices";
+pub const VOICE_REPO_REVISION: &str = "0ee17205f254b5abc43b266c8a0f215565c352f7";
 pub const VOICE_CATALOG: &str = "voices.jsonl";
 pub const TOKENIZER: &str = "tokenizer.5.0.0.json";
 /// Checkpoint files read from the model and codec repositories.
