@@ -2,12 +2,13 @@ pub mod audio;
 pub mod graph;
 pub mod hub;
 mod kernels;
+pub mod setup;
 use crate::weights::Weights;
 use anyhow::{Context, Result, bail, ensure};
 use catena_lang::runtime::{Artifact, MemOwn, Runtime, Value};
 use serde::Deserialize;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -31,6 +32,7 @@ pub struct Config {
     pub activation_function: String,
     #[serde(default)]
     pub scale_embedding: bool,
+    pub tie_word_embeddings: Option<bool>,
 }
 impl Config {
     pub fn read(dir: &Path) -> Result<Self> {
@@ -39,6 +41,12 @@ impl Config {
         Ok(c)
     }
     pub fn validate(&self) -> Result<()> {
+        // Whisper predicts with its token embedding. Checkpoint formats may
+        // repeat that tied tensor in proj_out.weight; only the embedding is used.
+        ensure!(
+            self.tie_word_embeddings != Some(false),
+            "untied Whisper output weights are unsupported"
+        );
         ensure!(
             self.model_type == "whisper"
                 && self.d_model > 0
@@ -211,20 +219,14 @@ pub fn weight_shapes(c: &Config) -> Vec<(String, Vec<usize>)> {
     }
     shapes
 }
+/// Inspect the checkpoint's inference layout without reading tensor values.
 pub fn validate_weights(w: &Weights, c: &Config) -> Result<()> {
-    let d = c.d_model;
     for (name, shape) in weight_shapes(c) {
         w.validate(&name, &shape)?;
     }
-    if w.tensors.contains_key("proj_out.weight") {
-        w.validate("proj_out.weight", &[c.vocab_size, d])?;
-        ensure!(
-            w.host_f32("proj_out.weight")? == w.host_f32("model.decoder.embed_tokens.weight")?,
-            "untied output weights are unsupported"
-        );
-    }
     Ok(())
 }
+
 pub struct Options {
     pub language: Option<String>,
     pub max_new_tokens: usize,
@@ -258,7 +260,6 @@ impl Whisper {
         let start = Instant::now();
         let config = Config::read(dir)?;
         let mut checkpoint = Weights::open(&dir.join("model.safetensors"))?;
-        validate_weights(&checkpoint, &config)?;
         let generation = Generation::read(dir, &config)?;
         let tokenizer = tokenizers::Tokenizer::from_file(dir.join("tokenizer.json"))
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -266,18 +267,33 @@ impl Whisper {
             tokenizer.get_vocab_size(true) == config.vocab_size,
             "tokenizer vocabulary does not match model"
         );
-        let source = graph::bundle(&config, debug)?;
+        let program = setup::from_checkpoint(&config, debug, &checkpoint)?;
         let (runtime, artifact) = crate::catena::load_runtime(
-            crate::catena::runtime_sources(&source),
+            crate::catena::runtime_sources(&program.source),
             crate::model::configured_gpu_dialect()?,
         )
         .context("compiling Whisper Hex graphs")?;
-        let names: BTreeSet<_> = graph::encoder_names(&config)
-            .into_iter()
-            .chain(graph::cross_names(&config))
-            .chain(graph::decoder_names(&config))
-            .collect();
-        checkpoint.prepare(&runtime, &names.into_iter().collect::<Vec<_>>(), false)?;
+        for binding in &program.weights {
+            if let crate::weights::preparation::Binding::Asset(name) = binding {
+                checkpoint.prepare_raw(&runtime, name)?;
+            }
+        }
+        if !program.inputs.is_empty() {
+            let raw = program
+                .inputs
+                .iter()
+                .map(|name| checkpoint.upload_raw(&runtime, name))
+                .collect::<Result<Vec<_>>>()?;
+            let args = raw.iter().map(|value| value.as_ref().into()).collect();
+            let outputs = memories(artifact.exec_values(setup::ENTRY, args)?)?;
+            ensure!(
+                outputs.len() == program.inputs.len(),
+                "invalid Whisper setup result"
+            );
+            for (name, data) in program.inputs.iter().zip(outputs) {
+                checkpoint.insert_prepared(name, data)?;
+            }
+        }
         if timings {
             eprintln!(
                 "load/compile/weight preparation: {:.3}s",
@@ -503,6 +519,7 @@ pub fn dump_f32(dir: Option<&Path>, name: &str, values: &[f32], shape: &[usize])
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
     fn generation() -> Generation {
         Generation {
             lang_to_id: BTreeMap::from([("<|en|>".into(), 5), ("<|fr|>".into(), 6)]),
@@ -561,6 +578,48 @@ mod tests {
         assert_eq!(shapes.keys().cloned().collect::<BTreeSet<_>>(), arguments);
         assert_eq!(shapes["model.encoder.conv1.weight"], [384, 80, 3]);
         assert_eq!(shapes["model.decoder.layers.3.fc1.weight"], [1536, 384]);
+        Ok(())
+    }
+
+    #[test]
+    fn setup_binds_only_checkpoint_ranges_needing_conversion() -> Result<()> {
+        use crate::weights::preparation::Binding;
+        let cfg = tiny()?;
+        let p = setup::program(&cfg, false, |name, _| {
+            Ok((
+                name.to_owned(),
+                if name.ends_with("bias") {
+                    safetensors::Dtype::BF16
+                } else {
+                    safetensors::Dtype::F32
+                },
+            ))
+        })?;
+        let mut next = 0;
+        for binding in p.weights {
+            match binding {
+                Binding::Asset(name) => assert!(name.ends_with("bias")),
+                Binding::Prepared(i) => {
+                    assert_eq!(i, next);
+                    next += 1;
+                }
+            }
+        }
+        assert_eq!(next, p.inputs.len());
+        let plain = setup::program(&cfg, false, |_, _| Ok(((), safetensors::Dtype::BF16)))?;
+        assert!(plain.inputs.is_empty());
+        assert!(!plain.source.contains("(def program whisper.setup "));
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "compiles the tiny Whisper inference and setup entries for both GPU dialects"]
+    fn setup_and_transcription_compile_together() -> Result<()> {
+        use catena_lang::runtime::GpuDialect;
+        let p = setup::program(&tiny()?, false, |_, _| Ok(((), safetensors::Dtype::F32)))?;
+        for dialect in [GpuDialect::Cuda, GpuDialect::Hip] {
+            crate::catena::compile_sources(crate::catena::runtime_sources(&p.source), dialect)?;
+        }
         Ok(())
     }
 

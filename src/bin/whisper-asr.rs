@@ -36,7 +36,11 @@ fn main() -> Result<()> {
         eprintln!("Whisper snapshot: {}", model_dir.display());
     }
     if let Some(path) = a.generate_entrypoint {
-        std::fs::write(path, whisper::graph::bundle(&config, a.dump_dir.is_some())?)?;
+        let weights = catena_models::weights::Weights::open(&model_dir.join("model.safetensors"))?;
+        std::fs::write(
+            path,
+            whisper::setup::from_checkpoint(&config, a.dump_dir.is_some(), &weights)?.source,
+        )?;
         return Ok(());
     }
     if a.inspect {
