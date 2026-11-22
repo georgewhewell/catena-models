@@ -815,9 +815,15 @@ mod tests {
     fn synthesis_compiles_without_host_reads() -> Result<()> {
         use catena_lang::runtime::GpuDialect;
         for config in CONFIGS {
-            let source = bundle(&config);
+            let program = preparation::build(&config, safetensors::Dtype::F32, |codec, _, _| {
+                // Exercise the halfword copy for unaligned backbone tensors and
+                // the codec's BF16 widening and convolution permutations.
+                let offset = if codec { 0 } else { 2 };
+                Ok(((), safetensors::Dtype::BF16, offset))
+            })?;
             for dialect in [GpuDialect::Hip, GpuDialect::Cuda] {
-                let module = catena::compile_sources(catena::runtime_sources(&source), dialect)?;
+                let module =
+                    catena::compile_sources(catena::runtime_sources(&program.source), dialect)?;
                 assert!(!module.source.contains("= catena_host_read("));
             }
         }
