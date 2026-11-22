@@ -19,6 +19,9 @@ pub(super) fn bundle(source: &str) -> String {
         include_str!("../catena/qwen35_batch_projection.hex"),
         include_str!("../catena/bf16_simt.hex"),
         include_str!("../catena/flux.hex"),
+        &crate::weights::cast_to_bf16_source()
+            .replace("inference.f32-to-bf16", "stdlib.flux.to-bf16"),
+        &crate::weights::widen_bf16_source().replace("vision.widen-bf16", "stdlib.flux.widen-bf16"),
         source,
     ] {
         crate::qwen::fused::append_hex(&mut out, helper);
@@ -27,7 +30,14 @@ pub(super) fn bundle(source: &str) -> String {
     out = out
         .replace("flux.", "stdlib.flux.")
         .replace("stdlib.stdlib.flux.", "stdlib.flux.");
-    for entry in ["encode-text", "denoise", "decode-image"] {
+    for entry in [
+        "encode-text",
+        "denoise",
+        "decode-image",
+        "setup-text",
+        "setup-denoise",
+        "setup-vae",
+    ] {
         out = out.replace(
             &format!("(def program stdlib.flux.{entry} :"),
             &format!("(def program flux.{entry} :"),

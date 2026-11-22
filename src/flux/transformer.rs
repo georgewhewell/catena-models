@@ -75,12 +75,9 @@ impl Transformer {
     ) -> Result<Self> {
         let config: TransformerConfig = read(snapshot.join("transformer/config.json"))?;
         let mut weights = Weights::open(&super::config::transformer_checkpoint(snapshot))?;
-        for (name, shape) in weight_shapes(&config) {
-            weights.validate(&name, &shape)?;
-        }
         let program = super::graph::transformer(&config, height, width, steps, debug)?;
-        let ops = Ops::new(Some(&program.source))?;
-        weights.prepare(&ops.runtime, &program.weights, false)?;
+        let shapes = super::preparation::ordered(&program.weights, weight_shapes(&config))?;
+        let ops = super::preparation::Stage::Denoise.load(&mut weights, shapes, &program.source)?;
         Ok(Self {
             ops,
             weights,

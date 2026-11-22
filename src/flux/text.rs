@@ -98,22 +98,12 @@ impl TextEncoder {
         let mut weights =
             Weights::open(&snapshot.join("text_encoder/model.safetensors.index.json"))?;
         let h = config.hidden_size;
-        let mut names = Vec::new();
-        for (name, shape) in weight_shapes(&config) {
-            weights.validate(&name, &shape)?;
-            names.push(name);
-        }
+        let shapes = weight_shapes(&config);
+        let names = shapes.iter().map(|(name, _)| name.clone()).collect();
         let source_start = std::time::Instant::now();
         let source = generated_source_with_debug(&config, debug)?;
         super::ops::startup_timing("text source assembly", source_start);
-        let ops = Ops::new(Some(&source))?;
-        weights.prepare(&ops.runtime, &names, false)?;
-        let norms = names
-            .iter()
-            .filter(|n| n.ends_with("norm.weight"))
-            .cloned()
-            .collect::<Vec<_>>();
-        weights.prepare(&ops.runtime, &norms, true)?;
+        let ops = super::preparation::Stage::Text.load(&mut weights, shapes, &source)?;
         Ok(Self {
             ops,
             weights,

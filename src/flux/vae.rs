@@ -23,12 +23,9 @@ impl VaeDecoder {
     ) -> Result<Self> {
         let config: VaeConfig = read(snapshot.join("vae/config.json"))?;
         let mut weights = Weights::open(&snapshot.join("vae/diffusion_pytorch_model.safetensors"))?;
-        for (name, shape) in weight_shapes() {
-            weights.validate(&name, &shape)?;
-        }
         let program = super::graph::vae(&config, height, width, debug)?;
-        let ops = Ops::new(Some(&program.source))?;
-        weights.prepare(&ops.runtime, &program.weights, true)?;
+        let shapes = super::preparation::ordered(&program.weights, weight_shapes())?;
+        let ops = super::preparation::Stage::Vae.load(&mut weights, shapes, &program.source)?;
         Ok(Self {
             ops,
             weights,
