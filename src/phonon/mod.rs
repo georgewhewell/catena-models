@@ -266,6 +266,7 @@ pub fn bundle(config: &Config) -> String {
         include_str!("../catena/resources.hex"),
         include_str!("../catena/cooperative.hex"),
         include_str!("../catena/bf16_simt.hex"),
+        &crate::weights::cast_to_bf16_source(),
         include_str!("../catena/whisper.hex"),
         include_str!("../catena/phonon.hex"),
         config.source,

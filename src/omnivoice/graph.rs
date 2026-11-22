@@ -702,6 +702,7 @@ pub fn build(
         include_str!("../catena/qwen35_batch_projection.hex"),
         include_str!("../catena/bf16_simt.hex"),
         include_str!("../catena/bf16_attention.hex"),
+        &crate::weights::cast_to_bf16_source(),
         include_str!("../catena/whisper.hex"),
         include_str!("../catena/qwen35_prefill.hex"),
         include_str!("../catena/state_buffers.hex"),

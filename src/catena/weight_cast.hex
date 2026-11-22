@@ -1,0 +1,65 @@
+(def program {{FAMILY}}.element : {((cap.ref mem) val) ((cap.own mem) val) (u64 val)} -> 1 =
+ ([input out element.]
+ ({[.input] [.element]} stdlib.models.memory.ref-read-{{INPUT}} [value.])
+ ([.value] {{INPUT}}.to-{{OUTPUT}} [rounded.])
+ ({[.out] [.element] [.rounded]} stdlib.models.memory.write-{{OUTPUT}})
+ (unit.elim)
+ (unit.intro)
+ ))
+
+(def program {{FAMILY}}.yes : {((cap.ref mem) val) ((cap.own mem) val) ({(u64 val) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> 1 =
+ ([input out pair.]
+ ([.pair] *.elim [element proofs.])
+ ([.proofs] *.elim [proof unit.])
+ ([.proof] unsafe.discard unit.elim)
+ ([.unit] unit.elim)
+ ({[.input] [.out] [.element]} {{FAMILY}}.element)
+ ))
+
+(def program {{FAMILY}}.no : {((cap.ref mem) val) ((cap.own mem) val) ({(u64 val) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> 1 =
+ ([input out pair.]
+ ([.pair] *.elim [element proofs.])
+ ([.proofs] *.elim [proof unit.])
+ ([.proof] unsafe.discard unit.elim)
+ [.unit]
+ ))
+
+(def program {{FAMILY}}.launch : {((cap.ref mem) val) ((cap.own mem) val) (u64 val) ({({master.block ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid} stdlib.gpu.geometry.type.Block)} :) (({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid master.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
+ ([input out count thread.]
+ ([.thread] stdlib.models.memory.thread-index [element.])
+ ({[.element] [.count]} stdlib.models.memory.u64.less [in-bounds.])
+ ({[.in-bounds] (unit.intro meta.master.predicate)} smolcat.value.named_at :.forget [condition.])
+ ({[.input] [.out]} partial.{{FAMILY}}.yes.2 [yes.])
+ ({[.input] [.out]} partial.{{FAMILY}}.no.2 [no.])
+ ({[.condition] [.element] [.yes] [.no] unit.intro} core.if)
+ ))
+
+(def program {{FAMILY}}.host : {((cap.ref mem) val) ((cap.own mem) val) (u64 val) ({master.grid ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({({master.index u64} :) ({((cap.own mem) val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
+ ([input out count grid pair.]
+ ([.pair] *.elim [step rest.])
+ ([.rest] *.elim [value proofs.])
+ ([.proofs] *.elim [less truth.])
+ ([.less] unsafe.discard unit.elim)
+ ({[.input] [.out] [.count]} partial.{{FAMILY}}.launch.3 [kernel.])
+ ({[.grid] [.kernel]} unsafe.launch)
+ (unit.elim)
+ ({[.value] [.truth]} *.intro)
+ ))
+
+(def program {{FAMILY}}.run : {((cap.ref mem) val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
+ ([input count elements.]
+ ([.elements] stdlib.models.memory.alloc-{{OUTPUT}} [out.])
+ ({[.count] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
+ ({[.padded] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [blocks.])
+ ({[.blocks]} stdlib.models.memory.grid [grid.])
+ ({[.input] [.out] [.count] [.grid]} partial.{{FAMILY}}.host.4 [host.])
+ ({(const.u64.0x0000000000000001) (unit.intro meta.master.end)} smolcat.value.named_at [end.])
+ ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
+ ([.proof] unsafe.discard unit.elim)
+ [.result]
+ ))
+
+(def program {{ENTRY}} : {((cap.ref mem) val) (u64 val)} -> ((cap.own mem) val) =
+ ([input count.]
+ ({[.input] [.count] [.count]} {{FAMILY}}.run)
+ ))

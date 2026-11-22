@@ -8,6 +8,7 @@ pub(super) fn source(config: &VisionConfig, names: &[String]) -> String {
         include_str!("../catena/memory.hex"),
         include_str!("../catena/numeric.hex"),
         include_str!("../catena/resources.hex"),
+        &crate::weights::widen_bf16_source(),
         include_str!("../catena/qwen35_vision.hex"),
         &graph,
     ]
