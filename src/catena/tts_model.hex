@@ -991,32 +991,6 @@
  ))
 
 
-(def program stdlib.tts.concat.element : {((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val)} -> 1 =
- ([input-arg-0 input-arg-1 input-arg-2 input-arg-3 input-arg-4 out element.]
- ([.element] [i.])
- ({[.input-arg-2] [.input-arg-3]} stdlib.models.memory.u64.add [t1.])
- ({[.i] [.t1]} stdlib.models.memory.u64.div [t2.])
- ({[.i] [.t1]} stdlib.models.memory.u64.rem [t3.])
- ({[.t3] [.input-arg-2]} stdlib.models.memory.u64.less [t4.])
- ({[.t2] [.input-arg-2]} stdlib.models.memory.u64.mul [t5.])
- ({[.t4] [.t3] (const.u64.0x0000000000000000)} stdlib.models.memory.select-u64 [t6.])
- ({[.t5] [.t6]} stdlib.models.memory.u64.add [t7.])
- ({[.t2] [.input-arg-3]} stdlib.models.memory.u64.mul [t8.])
- ({[.t3] [.input-arg-2]} stdlib.models.memory.u64.sub [t9.])
- ({[.t4] (const.u64.0x0000000000000000) [.t9]} stdlib.models.memory.select-u64 [t10.])
- ({[.t8] [.t10]} stdlib.models.memory.u64.add [t11.])
- ({[.input-arg-0] [.t7]} tts.read-bf16 [t12.])
- ([.t12] bf16.to-f32 [t13.])
- ({[.input-arg-1] [.t11]} tts.read-bf16 [t14.])
- ([.t14] bf16.to-f32 [t15.])
- ({[.t4] [.t13] [.t15]} stdlib.models.memory.select-f32 [t16.])
- ([.t16] f32.to-bf16 [t17.])
- ({[.out] [.element] [.t17]} stdlib.models.memory.write-bf16 [t18.])
- ([.t18] unit.elim)
- (unit.intro)
- ))
-
-
 (def program stdlib.tts.flip.element : {((cap.own mem) val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val)} -> 1 =
  ([input-arg-0 input-arg-1 input-arg-2 out element.]
  ([.element] [i.])
@@ -5782,73 +5756,6 @@
   ({(const.u64.0x0000000000000001) (const.u64.0x0000000000000001)} stdlib.models.coop.layout [v2.])
   ({[.v1] [.v2]} stdlib.models.coop.reserve [v3.])
   ({[.x] [.y] [.a] [.b] [.count] [.metadata] [.out] [.v1] [.v3]} partial.stdlib.tts.prealloc.add.host.fold.9 [v4.])
-  ({((const.u64.0x0000000000000001) stdlib.models.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [v5.])
-  ({[.v5] [.out] [.v4] core.truth} core.fold.bounded [result proof-result.])
-  ([.proof-result] unsafe.discard unit.elim)
-  [.result]
- ))
-(def program stdlib.tts.prealloc.concat.loop : {((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) (u64 val) ({({master.index32 u32} :) ({((cap.own mem) val) ({(({master.index32 master.end32} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
- ([x y cx cy count metadata first pair.]
-  ([.pair] *.elim [index rest.])
-  ([.rest] *.elim [acc proofs.])
-  ([.proofs] *.elim [less truth.])
-  ([.less] unsafe.discard unit.elim)
-  ([.index] :.forget stdlib.models.memory.u32.to-u64 [i.])
-  ({[.i] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.mul [v0.])
-  ({[.first] [.v0]} stdlib.models.memory.u64.add [v1.])
-  ({[.x] [.y] [.cx] [.cy] [.count] [.acc] [.v1]} stdlib.tts.concat.element [v2.])
-  ([.v2] unit.elim)
-  ({[.acc] [.truth]} *.intro)
- ))
-(def program stdlib.tts.prealloc.concat.kernel : {((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) ((cap.own mem) val) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({({perf.block ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid} stdlib.gpu.geometry.type.Block)} :) (({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid perf.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
- ([x y cx cy count metadata out memory thread.]
-  ([.thread] stdlib.models.coop.indices [ix.])
-  ([.ix] *.elim [block tid.])
-  ({[.block] (const.u64.0x0000000000001000)} stdlib.models.memory.u64.mul [v0.])
-  ({[.v0] [.tid]} stdlib.models.memory.u64.add [v1.])
-  ({[.metadata] (const.u64.0x0000000000000000)} stdlib.models.memory.own-read-u64 [v2.])
-  ({[.v2] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [v3.])
-  ({[.count] (const.u64.0x0000000000000753)} stdlib.models.memory.u64.div [v4.])
-  ({[.v3] [.v4]} stdlib.models.memory.u64.mul [v5.])
-  ({[.v1] [.v5]} stdlib.models.memory.u64.less [v6.])
-  ({[.v5] [.v1]} stdlib.models.memory.u64.sub [v7.])
-  ({[.v6] [.v7] (const.u64.0x0000000000000000)} stdlib.models.memory.select-u64 [v8.])
-  ({[.v8] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [v9.])
-  ({[.v9] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [v10.])
-  ({[.v10] (const.u64.0x0000000000000010)} stdlib.models.memory.u64.less [v11.])
-  ({[.v11] [.v10] (const.u64.0x0000000000000010)} stdlib.models.memory.select-u64 [v12.])
-  ({[.x] [.y] [.cx] [.cy] [.count] [.metadata] [.v1]} partial.stdlib.tts.prealloc.concat.loop.7 [v13.])
-  ({([.v12] stdlib.models.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [v14.])
-  ({[.v14] [.out] [.v13] core.truth} core.fold.bounded [result proof-result.])
-  ([.proof-result] unsafe.discard unit.elim)
-  (unit.intro)
- ))
-(def program stdlib.tts.prealloc.concat.host : {((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) ((cap.own mem) val) ({perf.grid ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({(u64 val) ((cap.own mem) val)} *)} -> ((cap.own mem) val) =
- ([x y cx cy count metadata out grid memory pair.]
-  ([.pair] *.elim [i acc.])
-  ({[.x] [.y] [.cx] [.cy] [.count] [.metadata] [.out] [.memory]} partial.stdlib.tts.prealloc.concat.kernel.8 [v0.])
-  ({[.grid] ([.memory] :.forget) [.v0]} unsafe.launch_shared unit.elim)
-  [.acc]
- ))
-(def program stdlib.tts.prealloc.concat.host.fold : {((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) ((cap.own mem) val) ({perf.grid ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({perf.memory ({({perf.blocks perf.one} stdlib.gpu.geometry.sort.D2) ({perf.threads perf.one} stdlib.gpu.geometry.sort.D2) perf.grid ({({({perf.float-slot} stdlib.gpu.memory.type.SlotName) perf.float-count f32} stdlib.gpu.memory.sort.Slot) ({({({perf.pair-slot} stdlib.gpu.memory.type.SlotName) perf.pair-count bf16x2} stdlib.gpu.memory.sort.Slot) list.Nil} list.Cons)} list.Cons)} stdlib.gpu.memory.type.SharedMemory)} :) ({({master.index32 u32} :) ({((cap.own mem) val) ({(({master.index32 master.end32} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
- ([x y cx cy count metadata out grid memory pair.]
-  ([.pair] *.elim [index rest.])
-  ([.rest] *.elim [acc proofs.])
-  ([.proofs] *.elim [less truth.])
-  ([.less] unsafe.discard unit.elim)
-  ([.index] :.forget stdlib.models.memory.u32.to-u64 [i.])
-  ({[.i] [.acc]} *.intro [v0.])
-  ({[.x] [.y] [.cx] [.cy] [.count] [.metadata] [.out] [.grid] [.memory] [.v0]} stdlib.tts.prealloc.concat.host [v1.])
-  ({[.v1] [.truth]} *.intro)
- ))
-(def program stdlib.tts.prealloc.concat : {((cap.own mem) val) ((cap.own mem) val) (u64 val) (u64 val) (u64 val) ((cap.own mem) val) ((cap.own mem) val)} -> ((cap.own mem) val) =
- ([x y cx cy count metadata out.]
-  ({[.count] (const.u64.0x0000000000000FFF)} stdlib.models.memory.u64.add [v0.])
-  ({[.v0] (const.u64.0x0000000000001000)} stdlib.models.memory.u64.div [blocks.])
-  ({[.blocks] (const.u64.0x0000000000000100)} stdlib.models.coop.grid [v1.])
-  ({(const.u64.0x0000000000000001) (const.u64.0x0000000000000001)} stdlib.models.coop.layout [v2.])
-  ({[.v1] [.v2]} stdlib.models.coop.reserve [v3.])
-  ({[.x] [.y] [.cx] [.cy] [.count] [.metadata] [.out] [.v1] [.v3]} partial.stdlib.tts.prealloc.concat.host.fold.9 [v4.])
   ({((const.u64.0x0000000000000001) stdlib.models.memory.fold-count-u32) (unit.intro meta.master.end32)} smolcat.value.named_at [v5.])
   ({[.v5] [.out] [.v4] core.truth} core.fold.bounded [result proof-result.])
   ([.proof-result] unsafe.discard unit.elim)

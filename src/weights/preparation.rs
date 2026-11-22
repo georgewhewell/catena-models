@@ -106,6 +106,63 @@ pub fn permute(input: Storage, output: Storage) -> String {
     s
 }
 
+fn concat_kernel(
+    name: &str,
+    left: &str,
+    right: &str,
+    extent: &str,
+    active: &str,
+    select: &str,
+) -> String {
+    include_str!("../catena/weight_concat.hex")
+        .replace("{{FAMILY}}", name)
+        .replace("{{LEFT}}", left)
+        .replace("{{RIGHT}}", right)
+        .replace("{{EXTENT}}", extent)
+        .replace("{{ACTIVE}}", active)
+        .replace("{{SELECT}}", select)
+}
+
+pub(crate) fn speech_concat() -> String {
+    concat_kernel(
+        "stdlib.tts.prealloc.concat",
+        OWN,
+        OWN,
+        OWN,
+        "  ({[.extent] (const.u64.0x0000000000000000)} stdlib.models.memory.own-read-u64 [v2.])
+  ({[.v2] (const.u64.0x0000000000000100)} stdlib.models.memory.u64.div [v3.])
+  ({[.count] (const.u64.0x0000000000000753)} stdlib.models.memory.u64.div [v4.])
+  ({[.v3] [.v4]} stdlib.models.memory.u64.mul [v5.])",
+        " ({[.input-arg-0] [.t7]} tts.read-bf16 [t12.])
+ ([.t12] bf16.to-f32 [t13.])
+ ({[.input-arg-1] [.t11]} tts.read-bf16 [t14.])
+ ([.t14] bf16.to-f32 [t15.])
+ ({[.t4] [.t13] [.t15]} stdlib.models.memory.select-f32 [t16.])
+ ([.t16] f32.to-bf16 [t17.])
+ ({[.out] [.element] [.t17]} stdlib.models.memory.write-bf16 [t18.])",
+    )
+}
+
+/// Specialize the same row-concatenation kernel for full-precision checkpoint
+/// data. The setup graph supplies equally typed inputs and a fully sized output.
+pub fn concat_f32(borrowed: bool) -> String {
+    let (kind, read) = if borrowed { (REF, "ref") } else { (OWN, "own") };
+    let select = format!(
+        " ({{[.input-arg-0] [.t7]}} stdlib.models.memory.{read}-read-f32 [left.])
+ ({{[.input-arg-1] [.t11]}} stdlib.models.memory.{read}-read-f32 [right.])
+ ({{[.t4] [.left] [.right]}} stdlib.models.memory.select-f32 [value.])
+ ({{[.out] [.element] [.value]}} stdlib.models.memory.write-f32 [t18.])"
+    );
+    concat_kernel(
+        &format!("stdlib.weights.concat-f32-{read}"),
+        kind,
+        kind,
+        U64,
+        "  ([.extent] [v5.])",
+        &select,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +182,59 @@ mod tests {
         ]
         .join("\n");
         compile_sources(runtime_sources(&source), dialect)
+    }
+
+    fn concat_module(dialect: GpuDialect) -> Result<RuntimeModule> {
+        let mut source = include_str!("../catena/memory.hex").to_owned();
+        for fragment in [
+            include_str!("../catena/cooperative.hex"),
+            &concat_f32(true),
+            &concat_f32(false),
+            "(def program concat : {((cap.ref mem) val) ((cap.ref mem) val)} -> ((cap.own mem) val) =
+             ([x y.]
+              ((const.u64.0x0000000000000006) stdlib.models.memory.alloc-f32 [out.])
+              ({[.x] [.y] (const.u64.0x0000000000000002) (const.u64.0x0000000000000001)
+                (const.u64.0x0000000000000006) (const.u64.0x0000000000000006) [.out]}
+               stdlib.weights.concat-f32-ref)))",
+        ] {
+            crate::qwen::fused::append_hex(&mut source, fragment);
+        }
+        compile_sources(runtime_sources(&source), dialect)
+    }
+
+    #[test]
+    fn checkpoint_concat_compiles_for_both_dialects() -> Result<()> {
+        for dialect in [GpuDialect::Cuda, GpuDialect::Hip] {
+            concat_module(dialect)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires GPU"]
+    fn concatenated_weights_keep_all_f32_bits() -> Result<()> {
+        let dialect = crate::model::configured_gpu_dialect()?;
+        let mut runtime = Runtime::new(dialect)?;
+        let artifact = runtime.load(concat_module(dialect)?)?;
+        let left = [0x3f80_0001, 0x8000_0000, 0x7fc1_2345, 1];
+        let right = [0xbf80_0001, 0x7f80_0000];
+        let x = runtime.mem_f32(&left.map(f32::from_bits))?;
+        let y = runtime.mem_f32(&right.map(f32::from_bits))?;
+        let [Value::MemOwn(out)] =
+            artifact.exec("concat", [x.as_ref().into(), y.as_ref().into()])?
+        else {
+            anyhow::bail!("missing concat result")
+        };
+        let bits: Vec<_> = out
+            .try_to_f32_vec()?
+            .into_iter()
+            .map(f32::to_bits)
+            .collect();
+        assert_eq!(
+            bits,
+            [left[0], left[1], right[0], left[2], left[3], right[1]]
+        );
+        Ok(())
     }
 
     fn norm_module(dialect: GpuDialect) -> Result<RuntimeModule> {

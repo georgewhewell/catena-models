@@ -1,6 +1,11 @@
 use super::Config;
 use anyhow::Result;
-pub const SOURCE: &str = include_str!("../catena/tts_model.hex");
+/// MMS graph together with its frame-bounded BF16 concatenation.
+pub static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let mut source = include_str!("../catena/tts_model.hex").to_owned();
+    source.push_str(&crate::weights::preparation::speech_concat());
+    source
+});
 /// Complete portable Hex bundle; the receiver supplies only Catena's core stdlib.
 pub fn bundle(config: &Config) -> Result<String> {
     config.validate()?;
@@ -19,7 +24,7 @@ fn with_exports(exports: &[&str]) -> String {
         include_str!("../catena/bf16_attention.hex"),
         &crate::weights::cast_to_bf16_source(),
         include_str!("../catena/whisper.hex"),
-        SOURCE,
+        SOURCE.as_str(),
     ] {
         crate::qwen::fused::append_hex(&mut source, fragment);
     }

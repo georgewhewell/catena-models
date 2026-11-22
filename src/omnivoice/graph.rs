@@ -711,8 +711,8 @@ pub fn build(
     ] {
         qwen::fused::append_hex(&mut source, fragment);
     }
-    let tts = include_str!("../catena/tts_model.hex")
-        .replace("stdlib.whisper.linear", "stdlib.omnivoice.conv-project");
+    let tts =
+        crate::tts::graph::SOURCE.replace("stdlib.whisper.linear", "stdlib.omnivoice.conv-project");
     qwen::fused::append_hex(&mut source, &tts);
     source.push_str(&catena::rope_frequency_program(config));
     source = source
