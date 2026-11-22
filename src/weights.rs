@@ -146,6 +146,22 @@ impl Weights {
         );
         Ok(())
     }
+    /// Upload an original tensor's bytes without changing its element type.
+    pub fn upload_raw(&self, runtime: &Runtime, name: &str) -> Result<MemOwn> {
+        let tensor = self
+            .tensors
+            .get(name)
+            .with_context(|| format!("missing tensor {name}"))?;
+        let bytes = &self.shards[tensor.file].bytes[tensor.offset..tensor.offset + tensor.len];
+        let (words, tail) = bytes.as_chunks::<2>();
+        ensure!(
+            tail.is_empty(),
+            "{name}: expected a whole number of 16-bit words"
+        );
+        let words: Vec<_> = words.iter().map(|word| u16::from_le_bytes(*word)).collect();
+        Ok(runtime.mem_u16(&words)?)
+    }
+
     pub fn host_f32(&self, name: &str) -> Result<Vec<f32>> {
         let t = self
             .tensors
@@ -186,22 +202,7 @@ impl Weights {
                     continue;
                 }
                 ensure!(t.dtype == Dtype::BF16, "{name}: expected BF16 or F32");
-                // CUDA weights live in device memory. HIP can map aligned BF16
-                // tensors directly; unaligned tensors need an owned upload.
-                if runtime.dialect() == GpuDialect::Cuda || t.offset % 2 != 0 {
-                    let bytes = &self.shards[t.file].bytes[t.offset..t.offset + t.len];
-                    let values: Vec<_> = bytes
-                        .chunks_exact(2)
-                        .map(|b| u16::from_le_bytes([b[0], b[1]]))
-                        .collect();
-                    self.converted
-                        .insert(name.clone(), runtime.mem_u16(&values)?);
-                } else if self.shards[t.file].registration.is_none() {
-                    self.shards[t.file].registration = Some(GpuRegistration::new(
-                        &self.shards[t.file].bytes,
-                        runtime.dialect(),
-                    )?);
-                }
+                self.prepare_raw(runtime, name)?;
             }
         }
         startup_timing(
@@ -214,9 +215,26 @@ impl Weights {
         );
         Ok(())
     }
-    pub(crate) fn insert_prepared(&mut self, name: &str, mem: MemOwn) -> Result<()> {
-        ensure!(self.tensors.contains_key(name), "missing tensor {name}");
-        self.converted.insert(name.to_owned(), mem);
+    /// Give the GPU a view of the original tensor. HIP can map aligned mmap
+    /// ranges directly; CUDA and misaligned views need their own allocation.
+    pub fn prepare_raw(&mut self, runtime: &Runtime, name: &str) -> Result<()> {
+        let tensor = self
+            .tensors
+            .get(name)
+            .with_context(|| format!("missing tensor {name}"))?;
+        if runtime.dialect() == GpuDialect::Cuda
+            || !tensor
+                .offset
+                .is_multiple_of(tensor.dtype.bitsize().div_ceil(8))
+        {
+            let memory = self.upload_raw(runtime, name)?;
+            self.converted.insert(name.to_owned(), memory);
+        } else if self.shards[tensor.file].registration.is_none() {
+            self.shards[tensor.file].registration = Some(GpuRegistration::new(
+                &self.shards[tensor.file].bytes,
+                runtime.dialect(),
+            )?);
+        }
         Ok(())
     }
     pub fn gpu_ref(&self, name: &str) -> Result<MemRef<'_>> {

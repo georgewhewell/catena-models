@@ -24,6 +24,13 @@ impl Storage {
     }
 }
 
+/// One inference argument, drawn from the checkpoint or an owned setup result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Binding<T> {
+    Asset(T),
+    Prepared(usize),
+}
+
 fn kernel(family: &str, arg: &str, index: &str, input: Storage, output: Storage) -> String {
     let value = if input == output {
         "[.value]".to_owned()
