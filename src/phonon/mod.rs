@@ -34,9 +34,16 @@ pub const CODEC_FILES: [&str; 2] = ["config.json", "model.safetensors"];
 pub const LATENT_STD: &str = "flow_lm.emb_std";
 pub const LATENT_MEAN: &str = "flow_lm.emb_mean";
 const HIDDEN: usize = 512;
-const LATENT: usize = 32;
+/// Elements of the `LATENT_STD` and `LATENT_MEAN` tensors.
+pub const LATENT: usize = 32;
 pub const CONTEXT: usize = 8192;
 pub const SAMPLE_RATE: u32 = 24_000;
+/// Values per frame of a voice's `speaker_wavs`.
+pub const VOICE_CHANNELS: usize = HIDDEN;
+/// F32 samples per generated frame.
+pub const FRAME_SAMPLES: usize = 1920;
+/// Elements of the zeroed F32 scratch `phonon.synthesize` takes.
+pub const SCRATCH: usize = 2048;
 /// Longer text is split into utterances of at most this many tokens.
 pub const UTTERANCE_TOKENS: usize = 50;
 /// Silence between consecutive utterances.
@@ -195,6 +202,20 @@ impl Config {
     }
 }
 
+/// The text budget `phonon.setup` returns for a voice of `frames` frames,
+/// which must be positive.
+pub fn text_limit(frames: usize) -> Result<usize> {
+    ensure!((1..CONTEXT).contains(&frames), "invalid voice frame count");
+    let limit = (((CONTEXT - 1 - frames) * 6).max(150) - 150) / 31;
+    ensure!(limit > 0, "Phonon voice leaves no room for text");
+    Ok(limit)
+}
+
+/// The most F32 samples `phonon.synthesize` returns for `tokens` text tokens.
+pub fn waveform_samples(tokens: usize) -> usize {
+    ((tokens + 6) * 25).div_ceil(6) * FRAME_SAMPLES
+}
+
 fn check_config(path: PathBuf, expected: serde_json::Value) -> Result<()> {
     check_config_fields(&hfhub::read_json(&path)?, &expected, "")
         .with_context(|| path.display().to_string())
@@ -226,17 +247,16 @@ fn check_config_fields(
 /// Complete Hex bundle exporting `phonon.setup` and `phonon.synthesize`; the
 /// receiver supplies only Catena's core stdlib (`catena::runtime_sources`).
 ///
-/// `phonon.setup(voice: bf16[frames * 512], frames: u64, ...bindings)` returns
-/// `{voice, cond, bos, time, text_limit: u64}`. The first four are BF16 buffers
-/// to pass back unchanged, and can be reused for every utterance of the voice.
-/// `text_limit` is `(max((8191 - frames) * 6, 150) - 150) / 31` and must be
-/// positive.
+/// `phonon.setup(voice: bf16[frames * VOICE_CHANNELS], frames: u64,
+/// ...bindings)` returns `{voice, cond, bos, time, text_limit: u64}`. The
+/// first four are BF16 buffers to pass back unchanged, and can be reused for
+/// every utterance of the voice. `text_limit` is `text_limit(frames)`.
 ///
-/// `phonon.synthesize(ids: u64[], voice, bos, cond, time, zero: f32[2048],
-/// LATENT_STD: bf16[32], LATENT_MEAN: bf16[32], frames: u64, tokens: u64,
-/// words: u64, seed: u64, utterance: u64, ...bindings)` returns
+/// `phonon.synthesize(ids: u64[], voice, bos, cond, time, zero: f32[SCRATCH],
+/// LATENT_STD: bf16[LATENT], LATENT_MEAN: bf16[LATENT], frames: u64,
+/// tokens: u64, words: u64, seed: u64, utterance: u64, ...bindings)` returns
 /// `{waveform, descriptor}`: see `decode_utterance`. The waveform holds up to
-/// `((tokens + 6) * 25 + 5) / 6` frames of 1920 F32 samples.
+/// `waveform_samples(tokens)` F32 samples.
 pub fn bundle(config: &Config) -> String {
     let mut source = include_str!("../catena/memory.hex").to_owned();
     for fragment in [
@@ -305,11 +325,25 @@ pub fn materialize(model: &Weights, codec: &Weights, binding: &Binding) -> Resul
 }
 
 impl Binding {
+    /// The bytes of this argument as stored: F32 for the codec, BF16 otherwise.
+    pub fn bytes(&self) -> usize {
+        self.elements() * if self.codec { 4 } else { 2 }
+    }
+
+    fn elements(&self) -> usize {
+        self.names.len() * self.shape.iter().product::<usize>()
+    }
+
     fn values(&self, weights: &Weights) -> Result<Vec<f32>> {
         let mut values = Vec::new();
         for name in &self.names {
             values.extend(weights.host_f32(name)?);
         }
+        ensure!(
+            values.len() == self.elements(),
+            "Phonon binding {:?} has an unexpected size",
+            self.names
+        );
         if let Some(packing) = &self.packing {
             // Device convolution reads weights with the output channel as the fastest axis.
             let packed = match packing {
@@ -361,11 +395,11 @@ pub fn read_voice(path: &Path) -> Result<Voice> {
         .tensors
         .get("speaker_wavs")
         .context("voice is missing speaker_wavs")?;
-    let [1, HIDDEN, frames] = voice_tensor.shape.as_slice() else {
-        bail!("expected speaker_wavs with shape [1, {HIDDEN}, frames]");
+    let [1, VOICE_CHANNELS, frames] = voice_tensor.shape.as_slice() else {
+        bail!("expected speaker_wavs with shape [1, {VOICE_CHANNELS}, frames]");
     };
     let frames = *frames;
-    ensure!((1..CONTEXT).contains(&frames), "invalid voice frame count");
+    text_limit(frames)?;
     let values = voice.host_f32("speaker_wavs")?;
     ensure!(
         values.iter().all(|x| x.is_finite()),
@@ -614,7 +648,7 @@ impl Phonon {
         };
         ensure!(text_limit > 0, "Phonon voice leaves no room for text");
         let [voice, cond, bos, time] = outputs(setup)?;
-        let zero = runtime.mem_f32(&[0.0; 2048])?;
+        let zero = runtime.mem_f32(&[0.0; SCRATCH])?;
         let latent_std = runtime.mem_u16(&bf16(&model.host_f32(LATENT_STD)?))?;
         let latent_mean = runtime.mem_u16(&bf16(&model.host_f32(LATENT_MEAN)?))?;
         Ok(Self {
@@ -682,7 +716,12 @@ impl Phonon {
                 index.into(),
             ],
         )?;
-        decode_utterance(&descriptor.try_to_u64_vec()?, waveform.try_to_f32_vec()?)
+        let samples = waveform.try_to_f32_vec()?;
+        ensure!(
+            samples.len() <= waveform_samples(prompt.ids.len()),
+            "Phonon returned more audio than its frame budget"
+        );
+        decode_utterance(&descriptor.try_to_u64_vec()?, samples)
     }
 }
 
@@ -725,6 +764,25 @@ mod tests {
             source: include_str!("../catena/phonon-9.hex"),
         },
     ];
+
+    #[test]
+    fn budgets_and_binding_sizes() -> Result<()> {
+        assert_eq!(text_limit(125)?, 1556);
+        assert_eq!(text_limit(8135)?, 6);
+        for frames in [0, 8161, CONTEXT] {
+            assert!(text_limit(frames).is_err());
+        }
+        assert_eq!(waveform_samples(50), 234 * FRAME_SAMPLES);
+        let binding = |codec| Binding {
+            names: vec!["a".into(), "b".into()],
+            shape: vec![3, 5],
+            packing: None,
+            codec,
+        };
+        assert_eq!(binding(false).bytes(), 60);
+        assert_eq!(binding(true).bytes(), 120);
+        Ok(())
+    }
 
     #[test]
     fn bindings_match_entry_signatures() -> Result<()> {
