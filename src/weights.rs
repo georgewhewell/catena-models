@@ -14,27 +14,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Both directions use the same bounds-checked GPU element loop.
-pub(crate) fn cast_to_bf16_source() -> String {
-    cast_source(
-        "stdlib.whisper.convert",
-        "inference.f32-to-bf16",
-        "f32",
-        "bf16",
-    )
-}
-
-pub(crate) fn widen_bf16_source() -> String {
-    cast_source("stdlib.vision.widen", "vision.widen-bf16", "bf16", "f32")
-}
-
-fn cast_source(family: &str, entry: &str, input: &str, output: &str) -> String {
-    include_str!("catena/weight_cast.hex")
-        .replace("{{FAMILY}}", family)
-        .replace("{{ENTRY}}", entry)
-        .replace("{{INPUT}}", input)
-        .replace("{{OUTPUT}}", output)
-}
+pub mod preparation;
+pub(crate) use preparation::{cast_to_bf16_source, widen_bf16_source};
 
 /// Read only the length and JSON header of a shard. Tensor offsets in the
 /// returned metadata are relative to the returned start of tensor data.

@@ -1,13 +1,14 @@
-(def program {{FAMILY}}.element : {((cap.ref mem) val) ((cap.own mem) val) (u64 val)} -> 1 =
+(def program {{FAMILY}}.element : {{{ARG}} ((cap.own mem) val) (u64 val)} -> 1 =
  ([input out element.]
- ({[.input] [.element]} stdlib.models.memory.ref-read-{{INPUT}} [value.])
- ([.value] {{INPUT}}.to-{{OUTPUT}} [rounded.])
- ({[.out] [.element] [.rounded]} stdlib.models.memory.write-{{OUTPUT}})
+{{INDEX}}
+ ({[.memory] [.index]} stdlib.models.memory.ref-read-{{INPUT}} [value.])
+ ({{VALUE}} [result.])
+ ({[.out] [.element] [.result]} stdlib.models.memory.write-{{OUTPUT}})
  (unit.elim)
  (unit.intro)
  ))
 
-(def program {{FAMILY}}.yes : {((cap.ref mem) val) ((cap.own mem) val) ({(u64 val) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> 1 =
+(def program {{FAMILY}}.yes : {{{ARG}} ((cap.own mem) val) ({(u64 val) ({((master.predicate prop.IsTrue) |-) 1} *)} *)} -> 1 =
  ([input out pair.]
  ([.pair] *.elim [element proofs.])
  ([.proofs] *.elim [proof unit.])
@@ -16,7 +17,7 @@
  ({[.input] [.out] [.element]} {{FAMILY}}.element)
  ))
 
-(def program {{FAMILY}}.no : {((cap.ref mem) val) ((cap.own mem) val) ({(u64 val) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> 1 =
+(def program {{FAMILY}}.no : {{{ARG}} ((cap.own mem) val) ({(u64 val) ({(({(master.predicate prop.IsTrue)} stdlib.prelude.prop.Not) |-) 1} *)} *)} -> 1 =
  ([input out pair.]
  ([.pair] *.elim [element proofs.])
  ([.proofs] *.elim [proof unit.])
@@ -24,7 +25,7 @@
  [.unit]
  ))
 
-(def program {{FAMILY}}.launch : {((cap.ref mem) val) ((cap.own mem) val) (u64 val) ({({master.block ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid} stdlib.gpu.geometry.type.Block)} :) (({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid master.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
+(def program {{FAMILY}}.launch : {{{ARG}} ((cap.own mem) val) (u64 val) ({({master.block ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid} stdlib.gpu.geometry.type.Block)} :) (({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2) master.grid master.block} stdlib.gpu.geometry.type.Thread) val)} *)} -> 1 =
  ([input out count thread.]
  ([.thread] stdlib.models.memory.thread-index [element.])
  ({[.element] [.count]} stdlib.models.memory.u64.less [in-bounds.])
@@ -34,7 +35,7 @@
  ({[.condition] [.element] [.yes] [.no] unit.intro} core.if)
  ))
 
-(def program {{FAMILY}}.host : {((cap.ref mem) val) ((cap.own mem) val) (u64 val) ({master.grid ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({({master.index u64} :) ({((cap.own mem) val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
+(def program {{FAMILY}}.host : {{{ARG}} ((cap.own mem) val) (u64 val) ({master.grid ({({master.blocks master.one} stdlib.gpu.geometry.sort.D2) ({master.threads master.one} stdlib.gpu.geometry.sort.D2)} stdlib.gpu.geometry.type.Grid)} :) ({({master.index u64} :) ({((cap.own mem) val) ({(({master.index master.end} prop.Less) |-) (prop.Truth |-)} *)} *)} *)} -> ({((cap.own mem) val) (prop.Truth |-)} *) =
  ([input out count grid pair.]
  ([.pair] *.elim [step rest.])
  ([.rest] *.elim [value proofs.])
@@ -46,7 +47,7 @@
  ({[.value] [.truth]} *.intro)
  ))
 
-(def program {{FAMILY}}.run : {((cap.ref mem) val) (u64 val) (u64 val)} -> ((cap.own mem) val) =
+(def program {{FAMILY}}.run : {{{ARG}} (u64 val) (u64 val)} -> ((cap.own mem) val) =
  ([input count elements.]
  ([.elements] stdlib.models.memory.alloc-{{OUTPUT}} [out.])
  ({[.count] (const.u64.0x00000000000000FF)} stdlib.models.memory.u64.add [padded.])
@@ -57,9 +58,4 @@
  ({[.end] [.out] [.host] core.truth} core.fold.bounded_u64 [result proof.])
  ([.proof] unsafe.discard unit.elim)
  [.result]
- ))
-
-(def program {{ENTRY}} : {((cap.ref mem) val) (u64 val)} -> ((cap.own mem) val) =
- ([input count.]
- ({[.input] [.count] [.count]} {{FAMILY}}.run)
  ))
